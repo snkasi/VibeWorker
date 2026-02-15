@@ -16,7 +16,7 @@ import {
 import Sidebar from "@/components/sidebar/Sidebar";
 import ChatPanel from "@/components/chat/ChatPanel";
 import InspectorPanel from "@/components/editor/InspectorPanel";
-import SettingsDialog from "@/components/settings/SettingsDialog";
+import SettingsDialog, { initTheme } from "@/components/settings/SettingsDialog";
 import { checkHealth, fetchSessionMessages, generateSessionTitle, type ChatMessage } from "@/lib/api";
 
 type ViewMode = "chat" | "memory" | "skills" | "cache";
@@ -43,6 +43,11 @@ export default function HomePage() {
   const draggingRef = useRef<"left" | "right" | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sidebarRefreshRef = useRef<() => void>(() => {});
+
+  // Initialize theme from localStorage on mount
+  useEffect(() => {
+    initTheme();
+  }, []);
 
   // Health check
   useEffect(() => {

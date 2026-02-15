@@ -242,6 +242,8 @@ export interface SettingsData {
   memory_daily_log_days: number;
   memory_max_prompt_tokens: number;
   memory_index_enabled: boolean;
+  // Theme (light/dark) - frontend-only, stored in localStorage
+  theme?: "light" | "dark";
 }
 
 export async function fetchSettings(): Promise<SettingsData> {

@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Settings, Eye, EyeOff, Loader2, Save } from "lucide-react";
+import React, { useState, useEffect, useCallback } from "react";
+import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -57,6 +57,57 @@ function SettingsField({
     );
 }
 
+function ToggleField({
+    label,
+    checked,
+    onChange,
+    hint,
+}: {
+    label: string;
+    checked: boolean;
+    onChange: (v: boolean) => void;
+    hint?: string;
+}) {
+    return (
+        <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">{label}</label>
+            <div className="flex items-center gap-2">
+                <button
+                    type="button"
+                    onClick={() => onChange(!checked)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${checked ? "bg-primary" : "bg-border"}`}
+                >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${checked ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                </button>
+                <span className="text-xs text-muted-foreground">
+                    {checked ? "开启" : "关闭"}
+                    {hint && (
+                        <span className="text-[10px] text-muted-foreground/50 ml-1">
+                            {hint}
+                        </span>
+                    )}
+                </span>
+            </div>
+        </div>
+    );
+}
+
+function applyTheme(theme: "light" | "dark") {
+    if (theme === "dark") {
+        document.documentElement.classList.add("dark");
+    } else {
+        document.documentElement.classList.remove("dark");
+    }
+    localStorage.setItem("vw-theme", theme);
+}
+
+export function initTheme() {
+    const saved = localStorage.getItem("vw-theme") as "light" | "dark" | null;
+    if (saved) {
+        applyTheme(saved);
+    }
+}
+
 export default function SettingsDialog() {
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -77,13 +128,17 @@ export default function SettingsDialog() {
         memory_daily_log_days: 2,
         memory_max_prompt_tokens: 4000,
         memory_index_enabled: true,
+        theme: "light",
     });
 
     useEffect(() => {
         if (open) {
             setLoading(true);
             fetchSettings()
-                .then((data) => setForm(data))
+                .then((data) => {
+                    const saved = localStorage.getItem("vw-theme") as "light" | "dark" | null;
+                    setForm({ ...data, theme: saved || data.theme || "light" });
+                })
                 .catch(() => { })
                 .finally(() => setLoading(false));
         }
@@ -92,7 +147,10 @@ export default function SettingsDialog() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            await updateSettings(form);
+            applyTheme(form.theme || "light");
+            // Exclude theme from backend payload (theme is frontend-only, stored in localStorage)
+            const { theme: _, ...backendSettings } = form;
+            await updateSettings(backendSettings as SettingsData);
             setOpen(false);
         } catch {
             // ignore
@@ -101,8 +159,13 @@ export default function SettingsDialog() {
         }
     };
 
-    const updateField = (key: keyof SettingsData, value: string | number | boolean) => {
+    const updateField = useCallback((key: keyof SettingsData, value: string | number | boolean) => {
         setForm((prev) => ({ ...prev, [key]: value }));
+    }, []);
+
+    const handleThemeChange = (theme: "light" | "dark") => {
+        updateField("theme", theme);
+        applyTheme(theme);
     };
 
     return (
@@ -117,14 +180,14 @@ export default function SettingsDialog() {
                     <Settings className="w-4 h-4" />
                 </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[480px]">
+            <DialogContent className="sm:max-w-[520px]">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <Settings className="w-4 h-4" />
-                        模型配置
+                        设置
                     </DialogTitle>
                     <DialogDescription>
-                        配置主模型、Embedding 和翻译模型。保存后需重启后端生效。
+                        通用配置、模型参数和记忆系统。保存后部分配置需重启后端生效。
                     </DialogDescription>
                 </DialogHeader>
 
@@ -133,19 +196,15 @@ export default function SettingsDialog() {
                         <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                     </div>
                 ) : (
-                    <Tabs defaultValue="llm" className="w-full">
-                        <TabsList className="grid w-full grid-cols-4 mb-4">
-                            <TabsTrigger value="llm" className="text-xs">
+                    <Tabs defaultValue="general" className="w-full">
+                        <TabsList className="grid w-full grid-cols-3 mb-4">
+                            <TabsTrigger value="general" className="text-xs">
+                                <span className="w-1.5 h-1.5 rounded-full bg-slate-500 mr-1.5" />
+                                通用
+                            </TabsTrigger>
+                            <TabsTrigger value="model" className="text-xs">
                                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5" />
-                                主模型
-                            </TabsTrigger>
-                            <TabsTrigger value="embedding" className="text-xs">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5" />
-                                Embedding
-                            </TabsTrigger>
-                            <TabsTrigger value="translate" className="text-xs">
-                                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 mr-1.5" />
-                                翻译
+                                模型
                             </TabsTrigger>
                             <TabsTrigger value="memory" className="text-xs">
                                 <span className="w-1.5 h-1.5 rounded-full bg-purple-500 mr-1.5" />
@@ -153,93 +212,144 @@ export default function SettingsDialog() {
                             </TabsTrigger>
                         </TabsList>
 
-                        {/* LLM Tab */}
-                        <TabsContent value="llm" className="space-y-3 mt-0">
-                            <SettingsField
-                                label="API Key"
-                                value={form.openai_api_key}
-                                onChange={(v) => updateField("openai_api_key", v)}
-                                placeholder="sk-..."
-                                secret
-                            />
-                            <SettingsField
-                                label="API Base URL"
-                                value={form.openai_api_base}
-                                onChange={(v) => updateField("openai_api_base", v)}
-                                placeholder="https://api.openai.com/v1"
-                            />
-                            <SettingsField
-                                label="模型名称"
-                                value={form.llm_model}
-                                onChange={(v) => updateField("llm_model", v)}
-                                placeholder="gpt-4o"
-                            />
-                            <div className="grid grid-cols-2 gap-3">
-                                <SettingsField
-                                    label="Temperature"
-                                    value={String(form.llm_temperature)}
-                                    onChange={(v) => updateField("llm_temperature", parseFloat(v) || 0)}
-                                    type="number"
-                                />
-                                <SettingsField
-                                    label="Max Tokens"
-                                    value={String(form.llm_max_tokens)}
-                                    onChange={(v) => updateField("llm_max_tokens", parseInt(v) || 4096)}
-                                    type="number"
-                                />
+                        {/* General Tab */}
+                        <TabsContent value="general" className="space-y-4 mt-0">
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-medium text-muted-foreground">主题</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleThemeChange("light")}
+                                        className={`flex items-center justify-center gap-2 h-9 rounded-lg border text-xs font-medium transition-all ${form.theme === "light"
+                                            ? "border-primary bg-primary/10 text-primary"
+                                            : "border-border bg-background text-muted-foreground hover:border-primary/30"
+                                            }`}
+                                    >
+                                        <Sun className="w-3.5 h-3.5" />
+                                        明亮模式
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleThemeChange("dark")}
+                                        className={`flex items-center justify-center gap-2 h-9 rounded-lg border text-xs font-medium transition-all ${form.theme === "dark"
+                                            ? "border-primary bg-primary/10 text-primary"
+                                            : "border-border bg-background text-muted-foreground hover:border-primary/30"
+                                            }`}
+                                    >
+                                        <Moon className="w-3.5 h-3.5" />
+                                        暗黑模式
+                                    </button>
+                                </div>
                             </div>
                         </TabsContent>
 
-                        {/* Embedding Tab */}
-                        <TabsContent value="embedding" className="space-y-3 mt-0">
-                            <p className="text-xs text-muted-foreground mb-3">
-                                留空则自动复用主模型的 API 配置
-                            </p>
-                            <SettingsField
-                                label="API Key"
-                                value={form.embedding_api_key}
-                                onChange={(v) => updateField("embedding_api_key", v)}
-                                placeholder="留空复用主模型"
-                                secret
-                            />
-                            <SettingsField
-                                label="API Base URL"
-                                value={form.embedding_api_base}
-                                onChange={(v) => updateField("embedding_api_base", v)}
-                                placeholder="留空复用主模型"
-                            />
-                            <SettingsField
-                                label="模型名称"
-                                value={form.embedding_model}
-                                onChange={(v) => updateField("embedding_model", v)}
-                                placeholder="text-embedding-3-small"
-                            />
-                        </TabsContent>
+                        {/* Model Tab */}
+                        <TabsContent value="model" className="mt-0">
+                            <Tabs defaultValue="llm" className="w-full">
+                                <TabsList className="grid w-full grid-cols-3 mb-3 h-8">
+                                    <TabsTrigger value="llm" className="text-[11px] h-6">
+                                        <span className="w-1 h-1 rounded-full bg-blue-500 mr-1" />
+                                        主模型
+                                    </TabsTrigger>
+                                    <TabsTrigger value="embedding" className="text-[11px] h-6">
+                                        <span className="w-1 h-1 rounded-full bg-emerald-500 mr-1" />
+                                        Embedding
+                                    </TabsTrigger>
+                                    <TabsTrigger value="translate" className="text-[11px] h-6">
+                                        <span className="w-1 h-1 rounded-full bg-orange-500 mr-1" />
+                                        翻译
+                                    </TabsTrigger>
+                                </TabsList>
 
-                        {/* Translate Tab */}
-                        <TabsContent value="translate" className="space-y-3 mt-0">
-                            <p className="text-xs text-muted-foreground mb-3">
-                                留空则自动复用主模型，可配置更轻量的模型用于翻译
-                            </p>
-                            <SettingsField
-                                label="API Key"
-                                value={form.translate_api_key}
-                                onChange={(v) => updateField("translate_api_key", v)}
-                                placeholder="留空复用主模型"
-                                secret
-                            />
-                            <SettingsField
-                                label="API Base URL"
-                                value={form.translate_api_base}
-                                onChange={(v) => updateField("translate_api_base", v)}
-                                placeholder="留空复用主模型"
-                            />
-                            <SettingsField
-                                label="模型名称"
-                                value={form.translate_model}
-                                onChange={(v) => updateField("translate_model", v)}
-                                placeholder="gpt-4o-mini"
-                            />
+                                {/* LLM Sub-tab */}
+                                <TabsContent value="llm" className="space-y-3 mt-0">
+                                    <SettingsField
+                                        label="API Key"
+                                        value={form.openai_api_key}
+                                        onChange={(v) => updateField("openai_api_key", v)}
+                                        placeholder="sk-..."
+                                        secret
+                                    />
+                                    <SettingsField
+                                        label="API Base URL"
+                                        value={form.openai_api_base}
+                                        onChange={(v) => updateField("openai_api_base", v)}
+                                        placeholder="https://api.openai.com/v1"
+                                    />
+                                    <SettingsField
+                                        label="模型名称"
+                                        value={form.llm_model}
+                                        onChange={(v) => updateField("llm_model", v)}
+                                        placeholder="gpt-4o"
+                                    />
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <SettingsField
+                                            label="Temperature"
+                                            value={String(form.llm_temperature)}
+                                            onChange={(v) => updateField("llm_temperature", parseFloat(v) || 0)}
+                                            type="number"
+                                        />
+                                        <SettingsField
+                                            label="Max Tokens"
+                                            value={String(form.llm_max_tokens)}
+                                            onChange={(v) => updateField("llm_max_tokens", parseInt(v) || 4096)}
+                                            type="number"
+                                        />
+                                    </div>
+                                </TabsContent>
+
+                                {/* Embedding Sub-tab */}
+                                <TabsContent value="embedding" className="space-y-3 mt-0">
+                                    <p className="text-xs text-muted-foreground mb-3">
+                                        留空则自动复用主模型的 API 配置
+                                    </p>
+                                    <SettingsField
+                                        label="API Key"
+                                        value={form.embedding_api_key}
+                                        onChange={(v) => updateField("embedding_api_key", v)}
+                                        placeholder="留空复用主模型"
+                                        secret
+                                    />
+                                    <SettingsField
+                                        label="API Base URL"
+                                        value={form.embedding_api_base}
+                                        onChange={(v) => updateField("embedding_api_base", v)}
+                                        placeholder="留空复用主模型"
+                                    />
+                                    <SettingsField
+                                        label="模型名称"
+                                        value={form.embedding_model}
+                                        onChange={(v) => updateField("embedding_model", v)}
+                                        placeholder="text-embedding-3-small"
+                                    />
+                                </TabsContent>
+
+                                {/* Translate Sub-tab */}
+                                <TabsContent value="translate" className="space-y-3 mt-0">
+                                    <p className="text-xs text-muted-foreground mb-3">
+                                        留空则自动复用主模型，可配置更轻量的模型用于翻译
+                                    </p>
+                                    <SettingsField
+                                        label="API Key"
+                                        value={form.translate_api_key}
+                                        onChange={(v) => updateField("translate_api_key", v)}
+                                        placeholder="留空复用主模型"
+                                        secret
+                                    />
+                                    <SettingsField
+                                        label="API Base URL"
+                                        value={form.translate_api_base}
+                                        onChange={(v) => updateField("translate_api_base", v)}
+                                        placeholder="留空复用主模型"
+                                    />
+                                    <SettingsField
+                                        label="模型名称"
+                                        value={form.translate_model}
+                                        onChange={(v) => updateField("translate_model", v)}
+                                        placeholder="gpt-4o-mini"
+                                    />
+                                </TabsContent>
+                            </Tabs>
                         </TabsContent>
 
                         {/* Memory Tab */}
@@ -247,39 +357,17 @@ export default function SettingsDialog() {
                             <p className="text-xs text-muted-foreground mb-3">
                                 配置记忆系统行为，包括自动提取和日志注入
                             </p>
-                            <div className="space-y-1">
-                                <label className="text-xs font-medium text-muted-foreground">自动提取记忆</label>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => updateField("memory_auto_extract", !form.memory_auto_extract)}
-                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.memory_auto_extract ? "bg-primary" : "bg-border"}`}
-                                    >
-                                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${form.memory_auto_extract ? "translate-x-4.5" : "translate-x-0.5"}`} />
-                                    </button>
-                                    <span className="text-xs text-muted-foreground">
-                                        {form.memory_auto_extract ? "开启" : "关闭"}
-                                        <span className="text-[10px] text-muted-foreground/50 ml-1">
-                                            (会产生额外 LLM 调用)
-                                        </span>
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-xs font-medium text-muted-foreground">语义搜索索引</label>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => updateField("memory_index_enabled", !form.memory_index_enabled)}
-                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.memory_index_enabled ? "bg-primary" : "bg-border"}`}
-                                    >
-                                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${form.memory_index_enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
-                                    </button>
-                                    <span className="text-xs text-muted-foreground">
-                                        {form.memory_index_enabled ? "开启" : "关闭（降级为关键词搜索）"}
-                                    </span>
-                                </div>
-                            </div>
+                            <ToggleField
+                                label="自动提取记忆"
+                                checked={form.memory_auto_extract}
+                                onChange={(v) => updateField("memory_auto_extract", v)}
+                                hint="(会产生额外 LLM 调用)"
+                            />
+                            <ToggleField
+                                label="语义搜索索引"
+                                checked={form.memory_index_enabled}
+                                onChange={(v) => updateField("memory_index_enabled", v)}
+                            />
                             <SettingsField
                                 label="日志加载天数"
                                 value={String(form.memory_daily_log_days)}
