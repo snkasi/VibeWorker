@@ -19,11 +19,13 @@ export interface ToolCall {
   tool: string;
   input: string;
   output?: string;
+  cached?: boolean;  // Cache indicator
 }
 
 export interface Session {
   session_id: string;
   message_count: number;
+  title: string | null;  // New: auto-generated title
   preview: string;
   updated_at: string;
 }
@@ -48,6 +50,7 @@ export interface SSEEvent {
   tool?: string;
   input?: string;
   output?: string;
+  cached?: boolean;  // Cache indicator
 }
 
 // ============================================
@@ -136,6 +139,18 @@ export async function deleteSession(sessionId: string): Promise<void> {
   await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
     method: "DELETE",
   });
+}
+
+export async function generateSessionTitle(sessionId: string): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/api/sessions/${sessionId}/generate-title`,
+    { method: "POST" }
+  );
+  if (!res.ok) {
+    throw new Error("Failed to generate title");
+  }
+  const data = await res.json();
+  return data.title;
 }
 
 // ============================================
@@ -354,6 +369,88 @@ export async function fetchStoreCategories(): Promise<string[]> {
   }
   const data = await res.json();
   return data.categories || [];
+}
+
+// ============================================
+// Cache API
+// ============================================
+export type CacheType = string;  // "url" | "llm" | "prompt" | "translate" | "tool_*"
+
+export interface CacheEntryPreview {
+  key: string;
+  created_at: number;
+  expire_at: number;
+  size_bytes: number;
+  preview: string;
+}
+
+export interface CacheTypeStats {
+  enabled: boolean;
+  ttl: number;
+  l1: { hits: number; misses: number; hit_rate: number; size: number; max_size: number };
+  l2: { hits: number; misses: number; hit_rate: number; size_mb: number; file_count: number };
+}
+
+export type CacheStats = Record<string, CacheTypeStats>;
+
+export interface CacheEntriesResponse {
+  entries: CacheEntryPreview[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export async function fetchCacheStats(): Promise<CacheStats> {
+  const res = await fetch(`${API_BASE}/api/cache/stats`);
+  if (!res.ok) throw new Error("Failed to fetch cache stats");
+  const data = await res.json();
+  return data.cache_stats;
+}
+
+export async function fetchCacheEntries(
+  cacheType: CacheType,
+  page: number = 1,
+  pageSize: number = 50
+): Promise<CacheEntriesResponse> {
+  const params = new URLSearchParams({
+    cache_type: cacheType,
+    page: page.toString(),
+    page_size: pageSize.toString(),
+  });
+  const res = await fetch(`${API_BASE}/api/cache/entries?${params}`);
+  if (!res.ok) throw new Error("Failed to fetch cache entries");
+  return await res.json();
+}
+
+export async function deleteCacheEntry(
+  cacheType: CacheType,
+  key: string
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/cache/entries/${cacheType}/${encodeURIComponent(key)}`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to delete cache entry");
+  }
+}
+
+export async function clearCache(
+  cacheType: CacheType | "all"
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/cache/clear?cache_type=${cacheType}`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error("Failed to clear cache");
+}
+
+export async function cleanupCache(): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/cache/cleanup`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to cleanup cache");
 }
 
 // ============================================

@@ -5,6 +5,7 @@ import {
     MessageSquare,
     Brain,
     Puzzle,
+    Database,
     Plus,
     Trash2,
     ChevronRight,
@@ -20,8 +21,9 @@ import {
 } from "@/components/ui/tooltip";
 import { fetchSessions, createSession, deleteSession, fetchSkills, deleteSkill, type Session, type Skill } from "@/lib/api";
 import SkillsStoreDialog from "@/components/store/SkillsStoreDialog";
+import CachePanel from "./CachePanel";
 
-type ViewMode = "chat" | "memory" | "skills";
+type ViewMode = "chat" | "memory" | "skills" | "cache";
 
 interface SidebarProps {
     currentSessionId: string;
@@ -29,12 +31,14 @@ interface SidebarProps {
     onViewChange: (view: ViewMode) => void;
     currentView: ViewMode;
     onFileOpen?: (path: string) => void;
+    onRefreshReady?: (refreshFn: () => void) => void;
 }
 
 const NAV_ITEMS: { id: ViewMode; icon: React.ElementType; label: string }[] = [
     { id: "chat", icon: MessageSquare, label: "对话" },
     { id: "memory", icon: Brain, label: "记忆" },
     { id: "skills", icon: Puzzle, label: "技能" },
+    { id: "cache", icon: Database, label: "缓存" },
 ];
 
 export default function Sidebar({
@@ -43,6 +47,7 @@ export default function Sidebar({
     onViewChange,
     currentView,
     onFileOpen,
+    onRefreshReady,
 }: SidebarProps) {
     const [sessions, setSessions] = useState<Session[]>([]);
     const [skills, setSkills] = useState<Skill[]>([]);
@@ -53,6 +58,13 @@ export default function Sidebar({
     useEffect(() => {
         loadSessions();
     }, []);
+
+    // Expose refresh function to parent
+    useEffect(() => {
+        if (onRefreshReady) {
+            onRefreshReady(loadSessions);
+        }
+    }, [onRefreshReady]);
 
     useEffect(() => {
         if (currentView === "skills") {
@@ -156,7 +168,9 @@ export default function Sidebar({
                             ? "会话"
                             : currentView === "memory"
                                 ? "记忆文件"
-                                : "技能"}
+                                : currentView === "skills"
+                                    ? "技能"
+                                    : "缓存"}
                     </h3>
                     {currentView === "chat" && (
                         <Tooltip>
@@ -220,7 +234,7 @@ export default function Sidebar({
                                     >
                                         <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-50 mt-0.5" />
                                         <span className="flex-1 min-w-0 line-clamp-2 break-words">
-                                            {session.preview || "新会话"}
+                                            {session.title || session.preview || "新会话"}
                                         </span>
                                         <span className="text-[10px] text-muted-foreground/40 shrink-0">
                                             {session.message_count}
@@ -291,6 +305,9 @@ export default function Sidebar({
                                 ))}
                             </div>
                         )}
+
+                        {/* Cache Panel */}
+                        {currentView === "cache" && <CachePanel onFileOpen={onFileOpen} />}
                     </div>
                 </ScrollArea>
             </div>

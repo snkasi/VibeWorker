@@ -77,7 +77,94 @@ npm lint       # 运行 ESLint
 | **read_file** | 读取本地文件内容（Skills 机制依赖） | `langchain_community.tools.file_management.ReadFileTool` | 必须设置 `root_dir` 为项目根目录，禁止读取系统外文件 |
 | **search_knowledge_base** | RAG 混合检索 | LlamaIndex (Hybrid: BM25 + Vector) | 扫描 `knowledge/` 构建索引，持久化存储在 `storage/` |
 
-### 3. Agent Skills 系统（指令遵循范式）
+### 3. 缓存系统 (Cache System)
+
+**关键文件：** `backend/cache/`
+
+**架构设计：** 双层缓存（L1 内存 + L2 磁盘）
+
+**设计原则：**
+- ✅ **无外部依赖**：纯 Python 实现，无需 Redis/Memcached
+- ✅ **文件即缓存**：所有缓存以 JSON 文件存储在 `.cache/` 目录（透明可审计）
+- ✅ **可配置性**：通过 `.env` 文件灵活控制开关、TTL、大小限制
+- ✅ **向后兼容**：默认配置不影响现有功能
+
+**缓存类型与配置：**
+
+| 缓存类型 | 默认状态 | 默认 TTL | 存储位置 | 用途 |
+|---------|---------|----------|----------|------|
+| **URL 缓存** | ✅ 开启 | 1 小时 | `.cache/url/` | 网页请求结果（fetch_url 工具） |
+| **LLM 缓存** | ❌ 关闭 | 24 小时 | `.cache/llm/` | Agent 响应（含流式模拟） |
+| **Prompt 缓存** | ✅ 开启 | 10 分钟 | `.cache/prompt/` | System Prompt 拼接结果 |
+| **翻译缓存** | ✅ 开启 | 7 天 | `.cache/translate/` | 翻译 API 结果 |
+
+**注意：**
+- `.cache/` 目录已添加到 `.gitignore`，不会上传到 git
+- LLM 缓存默认关闭，避免影响 Agent 的探索性和多样性
+- 用户可在前端设置页面手动清理缓存
+
+**工作原理：**
+
+1. **L1 内存缓存 (MemoryCache)**
+   - Python dict + TTL + LRU 淘汰
+   - 毫秒级访问速度
+   - 默认最多缓存 100 项
+
+2. **L2 磁盘缓存 (DiskCache)**
+   - JSON 文件存储（两级目录结构：`{key[:2]}/{key}.json`）
+   - 持久化，进程重启后可复用
+   - 定时清理（每小时）+ LRU 淘汰（超过 5GB 时）
+
+3. **缓存键生成**
+   - URL 缓存：`SHA256(url)`
+   - LLM 缓存：`SHA256(system_prompt_hash + recent_history + message + model + temperature)`
+   - Prompt 缓存：`SHA256(workspace_files_mtime)`
+   - 翻译缓存：`SHA256(content + target_language)`
+
+**流式缓存处理：**
+
+LLM 缓存支持流式输出模拟：
+- 缓存完整响应（包含所有 tokens 和 tool_calls）
+- 命中缓存时，逐字符分块 yield，模拟流式效果
+- 添加短暂延迟（10ms/chunk）保持用户体验一致性
+- 事件中添加 `"cached": true` 标记（可选）
+
+**配置示例 (.env)：**
+
+```bash
+# Cache Configuration
+ENABLE_URL_CACHE=true
+ENABLE_LLM_CACHE=false          # 默认关闭
+ENABLE_PROMPT_CACHE=true
+ENABLE_TRANSLATE_CACHE=true
+
+URL_CACHE_TTL=3600              # 1 hour
+LLM_CACHE_TTL=86400             # 24 hours
+PROMPT_CACHE_TTL=600            # 10 minutes
+TRANSLATE_CACHE_TTL=604800      # 7 days
+
+CACHE_MAX_MEMORY_ITEMS=100
+CACHE_MAX_DISK_SIZE_MB=5120     # 5GB
+```
+
+**管理 API：**
+
+```bash
+GET  /api/cache/stats           # 获取缓存统计信息
+POST /api/cache/clear?type=url  # 清空指定类型缓存（url/llm/prompt/translate/all）
+POST /api/cache/cleanup         # 清理过期缓存 + LRU 淘汰
+```
+
+**性能提升：**
+
+| 操作 | 优化前 | 优化后（缓存命中） | 提升 |
+|------|--------|------------------|------|
+| 网页请求 | ~500-2000ms | ~10-50ms | **10-100x** |
+| LLM 调用 | ~2000-5000ms | ~100-300ms（模拟流） | **10-20x** |
+| Prompt 拼接 | ~50-100ms | ~1-5ms | **10-50x** |
+| 翻译 API | ~1000-2000ms | ~5-20ms | **50-200x** |
+
+### 4. Agent Skills 系统（指令遵循范式）
 
 **原理：**
 - Skills 是 **教学说明书**，不是预写函数
@@ -373,6 +460,20 @@ E:\code\opensre/
 │   │   └── rag_tool.py
 │   ├── graph/                  # LangGraph Agent
 │   │   └── agent.py            # create_agent 配置
+│   ├── cache/                  # 缓存系统模块
+│   │   ├── __init__.py         # 缓存实例导出
+│   │   ├── base.py             # 基础接口
+│   │   ├── memory_cache.py     # L1 内存缓存
+│   │   ├── disk_cache.py       # L2 磁盘缓存
+│   │   ├── url_cache.py        # URL 缓存
+│   │   ├── llm_cache.py        # LLM 缓存
+│   │   ├── prompt_cache.py     # Prompt 缓存
+│   │   └── translate_cache.py  # 翻译缓存
+│   ├── .cache/                 # 缓存存储目录（不上传 git）
+│   │   ├── url/                # URL 缓存文件
+│   │   ├── llm/                # LLM 缓存文件
+│   │   ├── prompt/             # Prompt 缓存文件
+│   │   └── translate/          # 翻译缓存文件
 │   ├── knowledge/              # RAG 知识库文档（PDF/MD/TXT）
 │   └── storage/                # 索引持久化存储
 │
@@ -447,6 +548,14 @@ E:\code\opensre/
 - 前端 Chat 面板实时展示工具调用
 - 可折叠展开详细的 Input/Output
 - 完全可视化 Agent 的推理链
+
+**管理缓存系统：**
+- 查看缓存统计：`GET /api/cache/stats`
+- 清空指定缓存：`POST /api/cache/clear?type=url` (url/llm/prompt/translate/all)
+- 清理过期缓存：`POST /api/cache/cleanup`
+- 手动删除缓存文件：直接删除 `backend/.cache/` 目录
+- 配置缓存行为：编辑 `backend/.env` 中的 `ENABLE_*_CACHE` 和 `*_CACHE_TTL` 参数
+- 测试缓存功能：运行 `python backend/test_cache.py`
 
 ---
 

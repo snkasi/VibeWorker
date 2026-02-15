@@ -17,9 +17,9 @@ import Sidebar from "@/components/sidebar/Sidebar";
 import ChatPanel from "@/components/chat/ChatPanel";
 import InspectorPanel from "@/components/editor/InspectorPanel";
 import SettingsDialog from "@/components/settings/SettingsDialog";
-import { checkHealth, fetchSessionMessages, type ChatMessage } from "@/lib/api";
+import { checkHealth, fetchSessionMessages, generateSessionTitle, type ChatMessage } from "@/lib/api";
 
-type ViewMode = "chat" | "memory" | "skills";
+type ViewMode = "chat" | "memory" | "skills" | "cache";
 
 // Panel width constraints
 const LEFT_MIN = 200;
@@ -42,6 +42,7 @@ export default function HomePage() {
   const [rightWidth, setRightWidth] = useState(RIGHT_DEFAULT);
   const draggingRef = useRef<"left" | "right" | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const sidebarRefreshRef = useRef<() => void>(() => {});
 
   // Health check
   useEffect(() => {
@@ -80,6 +81,22 @@ export default function HomePage() {
     setCurrentSessionId(sessionId);
     setCurrentView("chat");
   }, []);
+
+  const handleMessageSent = useCallback(
+    async (isFirstMessage: boolean) => {
+      if (isFirstMessage) {
+        try {
+          // Generate title for the session
+          await generateSessionTitle(currentSessionId);
+          // Refresh session list
+          sidebarRefreshRef.current();
+        } catch (err) {
+          console.error("Failed to generate session title:", err);
+        }
+      }
+    },
+    [currentSessionId]
+  );
 
   // ---- Drag resize logic ----
   const handleMouseDown = useCallback((side: "left" | "right") => {
@@ -205,6 +222,9 @@ export default function HomePage() {
             onViewChange={setCurrentView}
             currentView={currentView}
             onFileOpen={handleFileOpen}
+            onRefreshReady={(refreshFn) => {
+              sidebarRefreshRef.current = refreshFn;
+            }}
           />
         </aside>
 
@@ -220,6 +240,7 @@ export default function HomePage() {
             sessionId={currentSessionId}
             initialMessages={sessionMessages}
             onFileOpen={handleFileOpen}
+            onMessageSent={handleMessageSent}
           />
         </main>
 

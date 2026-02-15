@@ -64,6 +64,62 @@ async def run_agent(
     Yields:
         Event dicts with type and content for SSE streaming.
     """
+    # If LLM cache is disabled, use original logic
+    if not settings.enable_llm_cache:
+        async for event in _run_agent_no_cache(message, session_history, stream):
+            yield event
+        return
+
+    # LLM cache is enabled - prepare cache key parameters
+    system_prompt = build_system_prompt()
+
+    # Convert session history to simplified format for cache key
+    recent_history = []
+    for msg in session_history[-3:]:  # Last 3 messages
+        recent_history.append({
+            "role": msg.get("role", ""),
+            "content": msg.get("content", "")[:500],  # Truncate to 500 chars
+        })
+
+    cache_key_params = {
+        "system_prompt": system_prompt,
+        "recent_history": recent_history,
+        "current_message": message,
+        "model": settings.llm_model,
+        "temperature": settings.llm_temperature,
+    }
+
+    # Use LLM cache with streaming
+    from cache import llm_cache
+
+    async def generator():
+        async for event in _run_agent_no_cache(message, session_history, stream):
+            yield event
+
+    async for event in llm_cache.get_or_generate(
+        key_params=cache_key_params,
+        generator_func=generator,
+        stream=stream,
+    ):
+        yield event
+
+
+async def _run_agent_no_cache(
+    message: str,
+    session_history: list[dict],
+    stream: bool = True,
+):
+    """
+    Run the agent without caching (internal implementation).
+
+    Args:
+        message: User's input message.
+        session_history: Previous conversation history.
+        stream: Whether to stream the response.
+
+    Yields:
+        Event dicts with type and content for SSE streaming.
+    """
     agent = create_agent_graph()
 
     # Build messages from session history
@@ -111,10 +167,27 @@ async def run_agent(
                 # Tool call finished
                 tool_name = event.get("name", "")
                 tool_output = event.get("data", {}).get("output", "")
+
+                # Extract actual content from tool output
+                # LangGraph may wrap the output in an object with a 'content' attribute
+                if hasattr(tool_output, 'content'):
+                    output_str = str(tool_output.content)
+                else:
+                    output_str = str(tool_output)
+
+                # Limit output size
+                output_str = output_str[:2000]
+
+                # Check for cache marker
+                is_cached = output_str.startswith('[CACHE_HIT]')
+                if is_cached:
+                    logger.info(f"✓ Cache hit for tool: {tool_name}")
+
                 yield {
                     "type": "tool_end",
                     "tool": tool_name,
-                    "output": str(tool_output)[:2000],  # Limit output size
+                    "output": output_str,
+                    "cached": is_cached,  # Add cached flag
                 }
 
         yield {"type": "done"}

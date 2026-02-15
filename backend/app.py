@@ -8,6 +8,7 @@ import logging
 import asyncio
 from pathlib import Path
 from typing import Optional
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +28,48 @@ logging.basicConfig(
 )
 logger = logging.getLogger("vibeworker")
 
+
+# ============================================
+# Lifespan Event Handler
+# ============================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown."""
+    # Startup
+    settings.ensure_dirs()
+    logger.info("VibeWorker Backend started on port %d", settings.port)
+    logger.info("Project root: %s", PROJECT_ROOT)
+
+    # Start cache cleanup task
+    async def cleanup_loop():
+        """Periodic cache cleanup every hour."""
+        while True:
+            await asyncio.sleep(3600)  # 1 hour
+            try:
+                logger.info("Running periodic cache cleanup...")
+                from cache import url_cache, llm_cache, prompt_cache, translate_cache
+
+                for cache in [url_cache, llm_cache, prompt_cache, translate_cache]:
+                    cache.l1.cleanup_expired()
+                    cache.l2.cleanup_expired()
+                    cache.l2.cleanup_lru()
+
+                logger.info("Periodic cache cleanup completed")
+
+            except Exception as e:
+                logger.error(f"Periodic cache cleanup failed: {e}")
+
+    # Start cleanup task in background
+    cleanup_task = asyncio.create_task(cleanup_loop())
+    logger.info("Cache cleanup task started (runs every hour)")
+
+    yield
+
+    # Shutdown
+    cleanup_task.cancel()
+    logger.info("Cache cleanup task stopped")
+
+
 # ============================================
 # FastAPI Application
 # ============================================
@@ -34,6 +77,7 @@ app = FastAPI(
     title="VibeWorker API",
     description="VibeWorker - Your Local AI Digital Worker with Real Memory",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS - Allow frontend (Next.js dev server)
@@ -49,17 +93,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# ============================================
-# Startup
-# ============================================
-@app.on_event("startup")
-async def startup_event():
-    """Initialize directories and resources on startup."""
-    settings.ensure_dirs()
-    logger.info("VibeWorker Backend started on port %d", settings.port)
-    logger.info("Project root: %s", PROJECT_ROOT)
 
 
 # ============================================
@@ -124,9 +157,12 @@ async def chat(request: ChatRequest):
                     "input": event.get("input", ""),
                 })
             elif event["type"] == "tool_end":
+                is_cached = event.get("cached", False)
                 for tc in tool_calls_log:
                     if tc["tool"] == event["tool"] and "output" not in tc:
                         tc["output"] = event.get("output", "")
+                        if is_cached:
+                            tc["cached"] = True
                         break
 
         # Save assistant response
@@ -170,14 +206,18 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
                 yield f"data: {sse_data}\n\n"
 
             elif event_type == "tool_end":
+                is_cached = event.get("cached", False)
                 for tc in tool_calls_log:
                     if tc["tool"] == event["tool"] and "output" not in tc:
                         tc["output"] = event.get("output", "")
+                        if is_cached:
+                            tc["cached"] = True
                         break
                 sse_data = json.dumps({
                     "type": "tool_end",
                     "tool": event["tool"],
                     "output": event.get("output", "")[:1000],
+                    "cached": is_cached,
                 }, ensure_ascii=False)
                 yield f"data: {sse_data}\n\n"
 
@@ -236,11 +276,11 @@ async def write_file(request: FileWriteRequest):
         raise HTTPException(status_code=403, detail="Access denied: path outside project")
 
     # Only allow editing certain directories
-    allowed_prefixes = ["memory", "workspace", "skills", "knowledge"]
+    allowed_prefixes = ["memory", "workspace", "skills", "knowledge", ".cache"]
     if not any(request.path.startswith(prefix) for prefix in allowed_prefixes):
         raise HTTPException(
             status_code=403,
-            detail="Can only edit files in memory/, workspace/, skills/, or knowledge/ directories",
+            detail="Can only edit files in memory/, workspace/, skills/, knowledge/, or .cache/ directories",
         )
 
     try:
@@ -328,6 +368,60 @@ async def delete_session(session_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": "ok"}
+
+
+@app.post("/api/sessions/{session_id}/generate-title")
+async def generate_session_title(session_id: str):
+    """
+    Generate a title for a session based on the first user message.
+    Uses LLM to create a concise, descriptive title.
+    """
+    from graph.agent import create_llm
+
+    messages = session_manager.get_session(session_id)
+    if not messages:
+        raise HTTPException(status_code=404, detail="Session not found or empty")
+
+    # Get first user message
+    first_user_msg = None
+    for msg in messages:
+        if msg.get("role") == "user":
+            first_user_msg = msg.get("content", "")
+            break
+
+    if not first_user_msg:
+        raise HTTPException(status_code=400, detail="No user message found")
+
+    try:
+        # Use LLM to generate a concise title
+        llm = create_llm()
+        prompt = f"""请为以下对话生成一个简短的标题（5-15个字）。
+标题应该准确概括用户的问题或需求，使用中文。
+只返回标题文字，不要有引号或其他符号。
+
+用户消息：
+{first_user_msg[:500]}
+
+标题："""
+
+        response = await llm.ainvoke(prompt)
+        title = response.content.strip()
+
+        # Limit title length
+        if len(title) > 30:
+            title = title[:30] + "..."
+
+        # Save title to session
+        session_manager.set_title(session_id, title)
+
+        return {"session_id": session_id, "title": title}
+
+    except Exception as e:
+        logger.error(f"Error generating title: {e}")
+        # Fallback: use first 15 chars of message
+        fallback_title = first_user_msg[:15] + ("..." if len(first_user_msg) > 15 else "")
+        session_manager.set_title(session_id, fallback_title)
+        return {"session_id": session_id, "title": fallback_title}
 
 
 # ============================================
@@ -507,6 +601,18 @@ async def translate_content(request: TranslateRequest):
     if not request.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
+    # Check cache first
+    try:
+        from cache import translate_cache
+        cached = translate_cache.get_translation(
+            request.content, request.target_language
+        )
+        if cached is not None:
+            logger.info(f"✓ Translation cache hit: {request.target_language}")
+            return cached
+    except Exception as e:
+        logger.warning(f"Translation cache error (falling back to translate): {e}")
+
     try:
         # Use translation model config if set, otherwise fall back to main LLM config
         api_key = settings.translate_api_key or settings.llm_api_key
@@ -561,13 +667,25 @@ async def translate_content(request: TranslateRequest):
             if len(lines) > 2:
                 translated = "\n".join(lines[1:-1])
 
-        return {
+        result = {
             "status": "ok",
             "translated": translated,
             "source_language": "auto",
             "target_language": request.target_language,
             "model": model,
         }
+
+        # Cache the result
+        try:
+            from cache import translate_cache
+            translate_cache.cache_translation(
+                request.content, request.target_language, result
+            )
+            logger.debug(f"✓ Translation cached: {request.target_language}")
+        except Exception as e:
+            logger.warning(f"Failed to cache translation: {e}")
+
+        return result
     except Exception as e:
         logger.error(f"Translation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Translation failed: {e}")
@@ -602,6 +720,17 @@ class SettingsUpdateRequest(BaseModel):
     translate_api_key: Optional[str] = None
     translate_api_base: Optional[str] = None
     translate_model: Optional[str] = None
+    # Cache configuration
+    enable_url_cache: Optional[bool] = None
+    enable_llm_cache: Optional[bool] = None
+    enable_prompt_cache: Optional[bool] = None
+    enable_translate_cache: Optional[bool] = None
+    url_cache_ttl: Optional[int] = None
+    llm_cache_ttl: Optional[int] = None
+    prompt_cache_ttl: Optional[int] = None
+    translate_cache_ttl: Optional[int] = None
+    cache_max_memory_items: Optional[int] = None
+    cache_max_disk_size_mb: Optional[int] = None
 
 
 def _read_env_file() -> dict:
@@ -664,6 +793,17 @@ async def get_settings():
         "translate_api_key": env.get("TRANSLATE_API_KEY", ""),
         "translate_api_base": env.get("TRANSLATE_API_BASE", ""),
         "translate_model": env.get("TRANSLATE_MODEL", ""),
+        # Cache configuration
+        "enable_url_cache": env.get("ENABLE_URL_CACHE", "true").lower() == "true",
+        "enable_llm_cache": env.get("ENABLE_LLM_CACHE", "false").lower() == "true",
+        "enable_prompt_cache": env.get("ENABLE_PROMPT_CACHE", "true").lower() == "true",
+        "enable_translate_cache": env.get("ENABLE_TRANSLATE_CACHE", "true").lower() == "true",
+        "url_cache_ttl": int(env.get("URL_CACHE_TTL", "3600")),
+        "llm_cache_ttl": int(env.get("LLM_CACHE_TTL", "86400")),
+        "prompt_cache_ttl": int(env.get("PROMPT_CACHE_TTL", "600")),
+        "translate_cache_ttl": int(env.get("TRANSLATE_CACHE_TTL", "604800")),
+        "cache_max_memory_items": int(env.get("CACHE_MAX_MEMORY_ITEMS", "100")),
+        "cache_max_disk_size_mb": int(env.get("CACHE_MAX_DISK_SIZE_MB", "5120")),
     }
 
 
@@ -684,12 +824,246 @@ async def update_settings(request: SettingsUpdateRequest):
         "TRANSLATE_API_KEY": request.translate_api_key,
         "TRANSLATE_API_BASE": request.translate_api_base,
         "TRANSLATE_MODEL": request.translate_model,
+        # Cache configuration
+        "ENABLE_URL_CACHE": str(request.enable_url_cache).lower() if request.enable_url_cache is not None else None,
+        "ENABLE_LLM_CACHE": str(request.enable_llm_cache).lower() if request.enable_llm_cache is not None else None,
+        "ENABLE_PROMPT_CACHE": str(request.enable_prompt_cache).lower() if request.enable_prompt_cache is not None else None,
+        "ENABLE_TRANSLATE_CACHE": str(request.enable_translate_cache).lower() if request.enable_translate_cache is not None else None,
+        "URL_CACHE_TTL": str(request.url_cache_ttl) if request.url_cache_ttl is not None else None,
+        "LLM_CACHE_TTL": str(request.llm_cache_ttl) if request.llm_cache_ttl is not None else None,
+        "PROMPT_CACHE_TTL": str(request.prompt_cache_ttl) if request.prompt_cache_ttl is not None else None,
+        "TRANSLATE_CACHE_TTL": str(request.translate_cache_ttl) if request.translate_cache_ttl is not None else None,
+        "CACHE_MAX_MEMORY_ITEMS": str(request.cache_max_memory_items) if request.cache_max_memory_items is not None else None,
+        "CACHE_MAX_DISK_SIZE_MB": str(request.cache_max_disk_size_mb) if request.cache_max_disk_size_mb is not None else None,
     }
     for env_key, value in update_map.items():
         if value is not None:
             env[env_key] = value
     _write_env_file(env)
     return {"status": "ok", "message": "Settings saved. Restart backend to apply changes."}
+
+
+# ============================================
+# Cache Management
+# ============================================
+def _get_core_cache_map() -> dict:
+    """Get the 4 core cache instances."""
+    from cache import url_cache, llm_cache, prompt_cache, translate_cache
+    return {
+        "url": url_cache,
+        "llm": llm_cache,
+        "prompt": prompt_cache,
+        "translate": translate_cache,
+    }
+
+
+def _discover_tool_cache_types() -> list[str]:
+    """Discover tool_* cache directories in .cache/."""
+    cache_dir = settings.cache_dir
+    if not cache_dir.exists():
+        return []
+    return [
+        d.name for d in sorted(cache_dir.iterdir())
+        if d.is_dir() and d.name.startswith("tool_")
+    ]
+
+
+def _get_tool_disk_cache(tool_type: str):
+    """Create a DiskCache instance for a tool_* cache directory."""
+    from cache.disk_cache import DiskCache
+    # tool_* directories are stored directly under cache_dir with their full name
+    # DiskCache expects cache_dir/cache_type, so we pass cache_dir and the type name
+    return DiskCache(
+        cache_dir=settings.cache_dir,
+        cache_type=tool_type,
+        default_ttl=3600,
+        max_size_mb=settings.cache_max_disk_size_mb,
+    )
+
+
+@app.get("/api/cache/stats")
+async def get_cache_stats():
+    """Get cache statistics for all cache types including tool caches."""
+    try:
+        core_map = _get_core_cache_map()
+        stats = {}
+        for name, cache in core_map.items():
+            stats[name] = cache.get_stats()
+
+        # Discover and include tool_* caches
+        for tool_type in _discover_tool_cache_types():
+            dc = _get_tool_disk_cache(tool_type)
+            stats[tool_type] = {
+                "enabled": True,
+                "ttl": dc.default_ttl,
+                "l1": {"hits": 0, "misses": 0, "hit_rate": 0, "size": 0, "max_size": 0},
+                "l2": dc.get_stats(),
+            }
+
+        return {
+            "status": "ok",
+            "cache_stats": stats,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get cache stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/cache/clear")
+async def clear_cache(cache_type: str = Query(default="all")):
+    """
+    Clear cache by type.
+
+    Args:
+        cache_type: Cache type to clear (url, llm, prompt, translate, tool_*, all)
+    """
+    try:
+        core_map = _get_core_cache_map()
+        cleared = {}
+
+        if cache_type == "all":
+            # Clear all core caches
+            for name, cache in core_map.items():
+                result = cache.clear()
+                cleared[name] = result
+                logger.info(f"Cleared {name} cache: {result}")
+            # Clear all tool_* caches
+            for tool_type in _discover_tool_cache_types():
+                dc = _get_tool_disk_cache(tool_type)
+                count = dc.clear()
+                cleared[tool_type] = {"l2_cleared": count}
+                logger.info(f"Cleared {tool_type} cache: {count}")
+        elif cache_type in core_map:
+            result = core_map[cache_type].clear()
+            cleared[cache_type] = result
+            logger.info(f"Cleared {cache_type} cache: {result}")
+        elif cache_type.startswith("tool_"):
+            dc = _get_tool_disk_cache(cache_type)
+            count = dc.clear()
+            cleared[cache_type] = {"l2_cleared": count}
+            logger.info(f"Cleared {cache_type} cache: {count}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid cache type: {cache_type}")
+
+        return {
+            "status": "ok",
+            "cache_type": cache_type,
+            "cleared": cleared,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to clear cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/cache/entries")
+async def list_cache_entries(
+    cache_type: str = Query(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """List cache entries for a specific cache type with pagination."""
+    try:
+        core_map = _get_core_cache_map()
+
+        if cache_type in core_map:
+            disk_cache = core_map[cache_type].l2
+        elif cache_type.startswith("tool_"):
+            disk_cache = _get_tool_disk_cache(cache_type)
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid cache type: {cache_type}")
+
+        result = disk_cache.list_entries(page=page, page_size=page_size)
+
+        return {
+            "status": "ok",
+            "cache_type": cache_type,
+            **result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list cache entries: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/cache/entries/{cache_type}/{key}")
+async def delete_cache_entry(cache_type: str, key: str):
+    """Delete a single cache entry by type and key."""
+    try:
+        core_map = _get_core_cache_map()
+
+        l1_deleted = False
+        l2_deleted = False
+
+        if cache_type in core_map:
+            cache = core_map[cache_type]
+            l1_deleted = cache.l1.delete(key)
+            l2_deleted = cache.l2.delete(key)
+        elif cache_type.startswith("tool_"):
+            dc = _get_tool_disk_cache(cache_type)
+            l2_deleted = dc.delete(key)
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid cache type: {cache_type}")
+
+        if not l1_deleted and not l2_deleted:
+            raise HTTPException(status_code=404, detail="Cache entry not found")
+
+        return {
+            "status": "ok",
+            "cache_type": cache_type,
+            "key": key,
+            "l1_deleted": l1_deleted,
+            "l2_deleted": l2_deleted,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete cache entry: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/cache/cleanup")
+async def cleanup_cache():
+    """Cleanup expired cache entries and perform LRU eviction if needed."""
+    try:
+        core_map = _get_core_cache_map()
+        cleanup_results = {}
+
+        # Cleanup L1 (memory) for core caches
+        for name, cache in core_map.items():
+            expired_count = cache.l1.cleanup_expired()
+            cleanup_results[f"{name}_l1_expired"] = expired_count
+
+        # Cleanup L2 (disk) - expired + LRU for core caches
+        for name, cache in core_map.items():
+            expired_count = cache.l2.cleanup_expired()
+            lru_count = cache.l2.cleanup_lru()
+            cleanup_results[f"{name}_l2_expired"] = expired_count
+            cleanup_results[f"{name}_l2_lru"] = lru_count
+
+        # Cleanup tool_* caches (disk only)
+        for tool_type in _discover_tool_cache_types():
+            dc = _get_tool_disk_cache(tool_type)
+            expired_count = dc.cleanup_expired()
+            lru_count = dc.cleanup_lru()
+            cleanup_results[f"{tool_type}_l2_expired"] = expired_count
+            cleanup_results[f"{tool_type}_l2_lru"] = lru_count
+
+        logger.info(f"Cache cleanup completed: {cleanup_results}")
+
+        return {
+            "status": "ok",
+            "cleanup_results": cleanup_results,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to cleanup cache: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================

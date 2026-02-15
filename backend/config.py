@@ -51,12 +51,27 @@ class Settings(BaseSettings):
     knowledge_dir: Path = PROJECT_ROOT / "knowledge"
     storage_dir: Path = PROJECT_ROOT / "storage"
     tools_dir: Path = PROJECT_ROOT / "tools"
+    cache_dir: Path = PROJECT_ROOT / ".cache"
 
     # System Prompt constraints
     max_prompt_chars: int = 20000
 
     # Agent execution limits
     agent_recursion_limit: int = 100  # Max tool calls per request (default was 25)
+
+    # Cache Configuration
+    enable_url_cache: bool = Field(default=True)
+    enable_llm_cache: bool = Field(default=False)  # 默认关闭，避免影响探索性
+    enable_prompt_cache: bool = Field(default=True)
+    enable_translate_cache: bool = Field(default=True)
+
+    url_cache_ttl: int = Field(default=3600)  # 1 hour
+    llm_cache_ttl: int = Field(default=86400)  # 24 hours
+    prompt_cache_ttl: int = Field(default=600)  # 10 minutes
+    translate_cache_ttl: int = Field(default=604800)  # 7 days
+
+    cache_max_memory_items: int = Field(default=100)
+    cache_max_disk_size_mb: int = Field(default=5120)  # 5GB
 
     # Claude Code Skills compatibility
     claude_code_skills_dir: Optional[Path] = None
@@ -93,6 +108,11 @@ class Settings(BaseSettings):
             self.workspace_dir,
             self.knowledge_dir,
             self.storage_dir,
+            self.cache_dir,
+            self.cache_dir / "url",
+            self.cache_dir / "llm",
+            self.cache_dir / "prompt",
+            self.cache_dir / "translate",
         ]:
             dir_path.mkdir(parents=True, exist_ok=True)
 

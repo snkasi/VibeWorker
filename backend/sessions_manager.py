@@ -29,7 +29,14 @@ class SessionManager:
         for f in sorted(self.sessions_dir.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
-                messages = data if isinstance(data, list) else data.get("messages", [])
+
+                # Support both old format (list) and new format (dict with metadata)
+                if isinstance(data, list):
+                    messages = data
+                    title = None
+                else:
+                    messages = data.get("messages", [])
+                    title = data.get("title", None)
 
                 # Extract metadata
                 session_id = f.stem
@@ -46,6 +53,7 @@ class SessionManager:
                 sessions.append({
                     "session_id": session_id,
                     "message_count": msg_count,
+                    "title": title,  # New field
                     "preview": last_message,
                     "updated_at": updated_at,
                 })
@@ -68,10 +76,25 @@ class SessionManager:
             logger.error(f"Error reading session {session_id}: {e}")
             return []
 
+    def get_session_data(self, session_id: str) -> dict:
+        """Get full session data including metadata."""
+        path = self._session_path(session_id)
+        if not path.exists():
+            return {"messages": [], "title": None}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return {"messages": data, "title": None}
+            return data
+        except Exception as e:
+            logger.error(f"Error reading session {session_id}: {e}")
+            return {"messages": [], "title": None}
+
     def save_message(self, session_id: str, role: str, content: str,
                      tool_calls: Optional[list] = None) -> None:
         """Append a message to a session."""
-        messages = self.get_session(session_id)
+        session_data = self.get_session_data(session_id)
+        messages = session_data.get("messages", [])
         message: dict = {
             "role": role,
             "content": content,
@@ -80,7 +103,8 @@ class SessionManager:
         if tool_calls:
             message["tool_calls"] = tool_calls
         messages.append(message)
-        self._write_session(session_id, messages)
+        session_data["messages"] = messages
+        self._write_session_data(session_id, session_data)
 
     def create_session(self, session_id: Optional[str] = None) -> str:
         """Create a new session and return its ID."""
@@ -88,7 +112,7 @@ class SessionManager:
             session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         path = self._session_path(session_id)
         if not path.exists():
-            self._write_session(session_id, [])
+            self._write_session_data(session_id, {"messages": [], "title": None})
         return session_id
 
     def delete_session(self, session_id: str) -> bool:
@@ -100,12 +124,26 @@ class SessionManager:
         return False
 
     def _write_session(self, session_id: str, messages: list[dict]) -> None:
-        """Write messages to a session file."""
+        """Write messages to a session file (legacy format)."""
         path = self._session_path(session_id)
         path.write_text(
             json.dumps(messages, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    def _write_session_data(self, session_id: str, session_data: dict) -> None:
+        """Write full session data including metadata."""
+        path = self._session_path(session_id)
+        path.write_text(
+            json.dumps(session_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def set_title(self, session_id: str, title: str) -> None:
+        """Set the title for a session."""
+        session_data = self.get_session_data(session_id)
+        session_data["title"] = title
+        self._write_session_data(session_id, session_data)
 
 
 # Singleton instance

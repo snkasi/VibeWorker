@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Square, Sparkles } from "lucide-react";
+import { Send, Square, Sparkles, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -49,6 +49,7 @@ interface ChatPanelProps {
     sessionId: string;
     initialMessages?: ChatMessage[];
     onFileOpen?: (path: string) => void;
+    onMessageSent?: (isFirstMessage: boolean) => void;
 }
 
 interface ThinkingStep {
@@ -56,6 +57,7 @@ interface ThinkingStep {
     tool: string;
     input?: string;
     output?: string;
+    cached?: boolean;
 }
 
 /** Map tool names to friendly Chinese labels with emoji */
@@ -69,6 +71,16 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
 
 function getToolDisplay(toolName: string) {
     return TOOL_LABELS[toolName] || { label: toolName, icon: "🔧" };
+}
+
+/** Normalize a tool call: detect [CACHE_HIT] marker in output and strip it */
+function normalizeToolCall(tc: ToolCall): ToolCall {
+    if (tc.cached || !tc.output?.startsWith("[CACHE_HIT]")) return tc;
+    return {
+        ...tc,
+        output: tc.output.substring(11),
+        cached: true,
+    };
 }
 
 /** Extract a human-readable summary from tool input JSON */
@@ -198,6 +210,7 @@ export default function ChatPanel({
     sessionId,
     initialMessages = [],
     onFileOpen,
+    onMessageSent,
 }: ChatPanelProps) {
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
     const [inputValue, setInputValue] = useState("");
@@ -266,18 +279,30 @@ export default function ChatPanel({
                         break;
 
                     case "tool_end":
+                        // Check for cache marker in output
+                        let output = event.output || "";
+                        let isCached = event.cached || false;
+                        if (output.startsWith("[CACHE_HIT]")) {
+                            output = output.substring(11); // Remove marker
+                            isCached = true;
+                        }
+
                         setThinkingSteps((prev) => [
                             ...prev,
                             {
                                 type: "tool_end",
                                 tool: event.tool || "",
-                                output: event.output,
+                                output: output,
+                                cached: isCached,
                             },
                         ]);
-                        // Update matching tool call with output
+                        // Update matching tool call with output and cached flag
                         for (const tc of toolCalls) {
                             if (tc.tool === event.tool && !tc.output) {
-                                tc.output = event.output;
+                                tc.output = output;
+                                if (isCached) {
+                                    tc.cached = true;
+                                }
                                 break;
                             }
                         }
@@ -308,7 +333,13 @@ export default function ChatPanel({
         setStreamingContent("");
         setThinkingSteps([]);
         setIsStreaming(false);
-    }, [inputValue, isStreaming, sessionId]);
+
+        // Notify parent if this was the first message
+        const isFirstMessage = messages.length === 0;
+        if (isFirstMessage && onMessageSent) {
+            onMessageSent(true);
+        }
+    }, [inputValue, isStreaming, sessionId, messages.length, onMessageSent]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -372,7 +403,9 @@ export default function ChatPanel({
                                 {/* Tool Calls (Collapsible Thoughts) */}
                                 {msg.tool_calls && msg.tool_calls.length > 0 && (
                                     <div className="mb-3 space-y-2">
-                                        {msg.tool_calls.map((tc, j) => (
+                                        {msg.tool_calls.map((rawTc, j) => {
+                                            const tc = normalizeToolCall(rawTc);
+                                            return (
                                             <div key={j} className="tool-call-card">
                                                 <div
                                                     className="tool-call-header"
@@ -385,6 +418,11 @@ export default function ChatPanel({
                                                     <span className="text-xs text-muted-foreground/60 truncate flex-1 font-mono">
                                                         {getToolInputSummary(tc.tool, tc.input)}
                                                     </span>
+                                                    {tc.cached && (
+                                                        <span title="使用缓存" className="inline-flex">
+                                                            <Zap className="w-3 h-3 text-muted-foreground/30" />
+                                                        </span>
+                                                    )}
                                                     <span className="text-xs text-muted-foreground/40">
                                                         {expandedTools.has(i * 100 + j) ? "▼" : "▶"}
                                                     </span>
@@ -406,7 +444,8 @@ export default function ChatPanel({
                                                     </div>
                                                 )}
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
                                 {/* Response Content */}
@@ -428,7 +467,7 @@ export default function ChatPanel({
                             <div className="mb-3 space-y-2">
                                 {(() => {
                                     // Group steps into tool calls with input/output
-                                    const toolGroups: { tool: string; input?: string; output?: string; isComplete: boolean }[] = [];
+                                    const toolGroups: { tool: string; input?: string; output?: string; isComplete: boolean; cached?: boolean }[] = [];
                                     for (const step of thinkingSteps) {
                                         if (step.type === "tool_start") {
                                             toolGroups.push({
@@ -442,6 +481,7 @@ export default function ChatPanel({
                                                 if (toolGroups[i].tool === step.tool && !toolGroups[i].isComplete) {
                                                     toolGroups[i].output = step.output;
                                                     toolGroups[i].isComplete = true;
+                                                    toolGroups[i].cached = step.cached;
                                                     break;
                                                 }
                                             }
@@ -460,6 +500,11 @@ export default function ChatPanel({
                                                 <span className="text-xs text-muted-foreground/60 truncate flex-1 font-mono">
                                                     {getToolInputSummary(tc.tool, tc.input)}
                                                 </span>
+                                                {tc.cached && (
+                                                    <span title="使用缓存" className="inline-flex">
+                                                        <Zap className="w-3 h-3 text-muted-foreground/30" />
+                                                    </span>
+                                                )}
                                                 <span className="text-xs text-muted-foreground/40">
                                                     {expandedStreamingTools.has(j) ? "▼" : "▶"}
                                                 </span>

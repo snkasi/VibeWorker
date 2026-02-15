@@ -1,8 +1,11 @@
 """System Prompt Builder - Dynamically assembles the system prompt from workspace files."""
 from pathlib import Path
 from typing import Optional
+import logging
 
 from config import settings, PROJECT_ROOT
+
+logger = logging.getLogger(__name__)
 
 
 def _read_file_safe(path: Path, max_chars: Optional[int] = None) -> str:
@@ -94,6 +97,16 @@ def build_system_prompt() -> str:
     5. AGENTS.md (行为准则 & 记忆操作指南)
     6. MEMORY.md (长期记忆)
     """
+    # Check cache first
+    try:
+        from cache import prompt_cache
+        cached = prompt_cache.get_cached_prompt()
+        if cached is not None:
+            logger.debug("✓ Using cached system prompt")
+            return cached
+    except Exception as e:
+        logger.warning(f"Prompt cache error (falling back to build): {e}")
+
     max_chars = settings.max_prompt_chars
     workspace = settings.workspace_dir
 
@@ -128,4 +141,14 @@ def build_system_prompt() -> str:
     if memory:
         parts.append(f"<!-- MEMORY -->\n{memory}")
 
-    return "\n\n---\n\n".join(parts)
+    full_prompt = "\n\n---\n\n".join(parts)
+
+    # Cache the result
+    try:
+        from cache import prompt_cache
+        prompt_cache.cache_prompt(full_prompt)
+        logger.debug("✓ System prompt cached")
+    except Exception as e:
+        logger.warning(f"Failed to cache prompt: {e}")
+
+    return full_prompt
