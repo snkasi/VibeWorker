@@ -400,7 +400,7 @@ frontend/src/
 ├── components/
 │   ├── chat/                   # ChatPanel（消息流 + 工具调用可视化）
 │   ├── sidebar/                # Sidebar（导航 + 会话/记忆/技能列表）
-│   │   └── MemoryPanel.tsx     # 记忆面板（三 Tab：条目/日志/文件）
+│   │   └── MemoryPanel.tsx     # 记忆面板（三 Tab：记忆/日记/人格）
 │   ├── editor/                 # InspectorPanel（Monaco Editor）
 │   ├── settings/               # SettingsDialog（模型配置弹窗，含记忆设置 Tab）
 │   └── ui/                     # Shadcn/UI 基础组件

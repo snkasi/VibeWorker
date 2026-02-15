@@ -489,9 +489,9 @@ MEMORY_INDEX_ENABLED=true       # 记忆语义搜索索引开关
     - 会话标题：最多显示两行，超出截断；无消息的新会话显示「新会话」。
     - 技能列表：每项右侧显示删除按钮（hover 可见），点击弹出确认后删除。
     - **记忆面板 ✅ 已实现**：三 Tab 设计
-        * **条目 Tab**：分类筛选（全部/偏好/事实/任务/反思/通用）+ 搜索 + 添加/删除条目
-        * **日志 Tab**：按日期倒序列出 Daily Log 文件，点击在 Inspector 中打开
-        * **文件 Tab**：保留原有 5 个 workspace 文件快捷入口（MEMORY.md/SOUL.md/IDENTITY.md/USER.md/AGENTS.md）
+        * **记忆 Tab**：持久记忆条目管理，分类筛选（全部/偏好/事实/任务/反思/通用）+ 搜索 + 添加/删除
+        * **日记 Tab**：按日期倒序列出 Daily Log 文件，点击在 Inspector 中打开
+        * **人格 Tab**：Agent 人格定义文件快捷入口（MEMORY.md/SOUL.md/IDENTITY.md/USER.md/AGENTS.md）
 + **中间 (Stage)**：对话流 + **思考链可视化** (Collapsible Thoughts)。
     - 宽度自适应填充剩余空间。
     - **工具调用友好化展示**：
@@ -581,7 +581,7 @@ vibeworker/
 │   │   ├── components/
 │   │   │   ├── chat/       # ChatPanel (对话流 + 工具调用可视化)
 │   │   │   ├── sidebar/    # Sidebar (会话/记忆/技能导航 + 商店入口)
-│   │   │   ├── MemoryPanel.tsx    # 记忆面板（三 Tab：条目/日志/文件）✅
+│   │   │   ├── MemoryPanel.tsx    # 记忆面板（三 Tab：记忆/日记/人格）✅
 │   │   │   ├── editor/     # InspectorPanel (Monaco Editor + 翻译功能)
 │   │   │   ├── store/      # 技能商店组件 ✅
 │   │   │   │   ├── SkillsStoreDialog.tsx  # 商店弹窗主组件

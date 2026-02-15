@@ -151,9 +151,9 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
             <div className="flex items-center gap-1 px-2 pt-1 pb-1">
                 {(
                     [
-                        { id: "entries", label: "条目", icon: FileText },
-                        { id: "logs", label: "日志", icon: Calendar },
-                        { id: "files", label: "文件", icon: FileText },
+                        { id: "entries", label: "记忆", icon: FileText },
+                        { id: "logs", label: "日记", icon: Calendar },
+                        { id: "files", label: "人格", icon: FileText },
                     ] as const
                 ).map((tab) => (
                     <button
@@ -314,7 +314,7 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                             )}
                             {!isLoading && entries.length === 0 && (
                                 <div className="px-3 py-8 text-center">
-                                    <p className="text-xs text-muted-foreground">暂无记忆条目</p>
+                                    <p className="text-xs text-muted-foreground">暂无持久记忆</p>
                                     <p className="text-xs text-muted-foreground/60 mt-1">
                                         对话中会自动积累记忆
                                     </p>
@@ -350,9 +350,9 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                         <>
                             {dailyLogs.length === 0 && (
                                 <div className="px-3 py-8 text-center">
-                                    <p className="text-xs text-muted-foreground">暂无日志</p>
+                                    <p className="text-xs text-muted-foreground">暂无日记</p>
                                     <p className="text-xs text-muted-foreground/60 mt-1">
-                                        对话过程中会自动生成每日日志
+                                        对话过程中会自动生成每日日记
                                     </p>
                                 </div>
                             )}
