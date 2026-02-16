@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
     MessageSquare,
     Brain,
@@ -113,10 +113,17 @@ export default function Sidebar({
         }
     }, [currentView]);
 
+    const initialLoadDone = useRef(false);
+
     const loadSessions = async () => {
         try {
             const data = await fetchSessions();
             setSessions(data);
+            // On first load, auto-select the most recent session
+            if (!initialLoadDone.current && data.length > 0) {
+                initialLoadDone.current = true;
+                onSessionSelect(data[0].session_id);
+            }
         } catch {
             // Backend might not be running
         }

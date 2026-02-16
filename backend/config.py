@@ -15,7 +15,19 @@ PROJECT_ROOT = Path(__file__).parent.resolve()
 def _resolve_data_dir() -> Path:
     """Resolve data_dir from env var or default, before full config loads."""
     raw = os.getenv("DATA_DIR", "~/.vibeworker/")
-    return Path(raw).expanduser().resolve()
+    resolved = Path(raw).expanduser().resolve()
+    # Safety: data_dir must NOT be inside project source directory
+    try:
+        resolved.relative_to(PROJECT_ROOT)
+        import warnings
+        warnings.warn(
+            f"DATA_DIR={raw} resolves inside project root ({PROJECT_ROOT}). "
+            f"Falling back to ~/.vibeworker/"
+        )
+        resolved = Path("~/.vibeworker/").expanduser().resolve()
+    except ValueError:
+        pass  # Good: outside project root
+    return resolved
 
 
 def _bootstrap_env():
@@ -169,7 +181,14 @@ class Settings(BaseSettings):
 
     def get_data_path(self) -> Path:
         """Get resolved data directory path."""
-        return Path(self.data_dir).expanduser().resolve()
+        resolved = Path(self.data_dir).expanduser().resolve()
+        # Safety: never allow data inside project source directory
+        try:
+            resolved.relative_to(PROJECT_ROOT)
+            resolved = Path("~/.vibeworker/").expanduser().resolve()
+        except ValueError:
+            pass  # Good: outside project root
+        return resolved
 
     def get_env_path(self) -> Path:
         """Get path to user .env file."""

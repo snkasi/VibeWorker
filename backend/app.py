@@ -1034,6 +1034,7 @@ class SettingsUpdateRequest(BaseModel):
 def _read_env_file() -> dict:
     """Read user .env file from data directory and parse into dict."""
     env_path = settings.get_env_path()
+    logger.debug(f"Reading settings from: {env_path}")
     result = {}
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -1049,6 +1050,14 @@ def _read_env_file() -> dict:
 def _write_env_file(env_dict: dict) -> None:
     """Write dict back to user .env file, preserving comments and structure."""
     env_path = settings.get_env_path()
+    # Safety: refuse to write inside project directory
+    try:
+        env_path.relative_to(PROJECT_ROOT)
+        logger.error(f"Refusing to write .env inside project directory: {env_path}")
+        return
+    except ValueError:
+        pass  # Good: outside project root
+    logger.info(f"Writing settings to: {env_path}")
     lines = []
     if env_path.exists():
         original_lines = env_path.read_text(encoding="utf-8").splitlines()
