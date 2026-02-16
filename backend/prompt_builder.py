@@ -27,6 +27,7 @@ def generate_skills_snapshot() -> str:
     if claude_code_dir:
         skills_dirs.append(claude_code_dir)
 
+    data_path = settings.get_data_path()
     skills_xml = "<available_skills>\n"
     for base_dir in skills_dirs:
         if not base_dir.exists():
@@ -41,11 +42,14 @@ def generate_skills_snapshot() -> str:
             name, description = _parse_skill_frontmatter(skill_md)
             if not name:
                 name = skill_dir.name
-            # Use relative path from project root
+            # Use relative path from data_dir first, fallback to PROJECT_ROOT
             try:
-                rel_path = skill_md.relative_to(PROJECT_ROOT)
+                rel_path = skill_md.relative_to(data_path)
             except ValueError:
-                rel_path = skill_md
+                try:
+                    rel_path = skill_md.relative_to(PROJECT_ROOT)
+                except ValueError:
+                    rel_path = skill_md
             skills_xml += f"  <skill>\n"
             skills_xml += f"    <name>{name}</name>\n"
             skills_xml += f"    <description>{description}</description>\n"
@@ -135,6 +139,15 @@ def build_system_prompt() -> str:
     agents = _read_file_safe(workspace / "AGENTS.md", max_chars)
     if agents:
         parts.append(f"<!-- AGENTS -->\n{agents}")
+
+    # 5.5 Workspace Info
+    data_path = settings.get_data_path()
+    parts.append(
+        f"<!-- WORKSPACE_INFO -->\n"
+        f"## 环境路径\n"
+        f"- **工作目录** (cwd): `{data_path}`\n"
+        f"- **项目源码**（只读）: `{PROJECT_ROOT}`"
+    )
 
     # 6. MEMORY.md + Daily Logs (with token budget)
     memory_parts = []

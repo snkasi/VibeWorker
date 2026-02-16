@@ -1,9 +1,10 @@
-"""Fetch URL Tool - Retrieve web content with HTML cleaning."""
+"""Fetch URL Tool - Retrieve web content with HTML cleaning and SSRF protection."""
 import requests
 import html2text
 import logging
 
 from langchain_core.tools import tool
+from security.classifier import classify_url, RiskLevel
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,19 @@ def fetch_url(url: str) -> str:
     Returns:
         Cleaned content in Markdown format, or error message.
     """
+    # SSRF protection: validate URL before fetching (respects config toggle)
+    try:
+        from config import settings
+        ssrf_on = settings.security_enabled and settings.security_ssrf_protection
+    except Exception:
+        ssrf_on = True
+    if ssrf_on:
+        risk = classify_url(url)
+        if risk == RiskLevel.BLOCKED:
+            return f"⛔ Blocked: URL '{url}' is not allowed (private network or self-referencing)."
+        if risk == RiskLevel.DANGEROUS:
+            return f"⛔ Blocked: URL '{url}' resolves to a private/internal IP address (SSRF protection)."
+
     # Check cache first
     try:
         from cache import url_cache

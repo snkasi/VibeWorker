@@ -17,7 +17,8 @@ import Sidebar from "@/components/sidebar/Sidebar";
 import ChatPanel from "@/components/chat/ChatPanel";
 import InspectorPanel from "@/components/editor/InspectorPanel";
 import SettingsDialog, { initTheme } from "@/components/settings/SettingsDialog";
-import { checkHealth, fetchSessionMessages, generateSessionTitle, type ChatMessage } from "@/lib/api";
+import { checkHealth, generateSessionTitle } from "@/lib/api";
+import { sessionStore } from "@/lib/sessionStore";
 
 type ViewMode = "chat" | "memory" | "skills" | "mcp" | "cache";
 
@@ -32,7 +33,6 @@ const RIGHT_DEFAULT = 384;
 export default function HomePage() {
   const [currentView, setCurrentView] = useState<ViewMode>("chat");
   const [currentSessionId, setCurrentSessionId] = useState("main_session");
-  const [sessionMessages, setSessionMessages] = useState<ChatMessage[]>([]);
   const [inspectorFile, setInspectorFile] = useState<string | null>(null);
   const [showInspector, setShowInspector] = useState(false);
   const [isBackendOnline, setIsBackendOnline] = useState(false);
@@ -60,18 +60,18 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Load session messages
+  // Register first-message callback for title generation
   useEffect(() => {
-    const load = async () => {
+    sessionStore.setOnFirstMessage(async (sessionId: string) => {
       try {
-        const messages = await fetchSessionMessages(currentSessionId);
-        setSessionMessages(messages);
-      } catch {
-        setSessionMessages([]);
+        await generateSessionTitle(sessionId);
+        sidebarRefreshRef.current();
+      } catch (err) {
+        console.error("Failed to generate session title:", err);
       }
-    };
-    load();
-  }, [currentSessionId]);
+    });
+    return () => sessionStore.setOnFirstMessage(null);
+  }, []);
 
   const handleFileOpen = useCallback((path: string) => {
     setInspectorFile(path);
@@ -86,22 +86,6 @@ export default function HomePage() {
     setCurrentSessionId(sessionId);
     setCurrentView("chat");
   }, []);
-
-  const handleMessageSent = useCallback(
-    async (isFirstMessage: boolean) => {
-      if (isFirstMessage) {
-        try {
-          // Generate title for the session
-          await generateSessionTitle(currentSessionId);
-          // Refresh session list
-          sidebarRefreshRef.current();
-        } catch (err) {
-          console.error("Failed to generate session title:", err);
-        }
-      }
-    },
-    [currentSessionId]
-  );
 
   // ---- Drag resize logic ----
   const handleMouseDown = useCallback((side: "left" | "right") => {
@@ -243,9 +227,7 @@ export default function HomePage() {
         <main className="flex-1 min-w-0">
           <ChatPanel
             sessionId={currentSessionId}
-            initialMessages={sessionMessages}
             onFileOpen={handleFileOpen}
-            onMessageSent={handleMessageSent}
           />
         </main>
 

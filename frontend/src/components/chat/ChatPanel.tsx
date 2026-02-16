@@ -7,7 +7,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { streamChat, type SSEEvent, type ChatMessage, type ToolCall } from "@/lib/api";
+import { type ToolCall } from "@/lib/api";
+import { useSessionState, useSessionActions } from "@/lib/sessionStore";
+import type { ThinkingStep } from "@/lib/sessionStore";
+import ApprovalDialog from "./ApprovalDialog";
 
 /** Custom code renderer with syntax highlighting for ReactMarkdown */
 const markdownCodeComponents = {
@@ -47,17 +50,7 @@ const markdownCodeComponents = {
 
 interface ChatPanelProps {
     sessionId: string;
-    initialMessages?: ChatMessage[];
     onFileOpen?: (path: string) => void;
-    onMessageSent?: (isFirstMessage: boolean) => void;
-}
-
-interface ThinkingStep {
-    type: "tool_start" | "tool_end";
-    tool: string;
-    input?: string;
-    output?: string;
-    cached?: boolean;
 }
 
 /** Map tool names to friendly Chinese labels with emoji */
@@ -215,138 +208,38 @@ function ToolOutputDisplay({ toolName, output }: { toolName: string; output: str
 
 export default function ChatPanel({
     sessionId,
-    initialMessages = [],
     onFileOpen,
-    onMessageSent,
 }: ChatPanelProps) {
-    const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+    // Store-driven state
+    const { messages, isStreaming, streamingContent, thinkingSteps, approvalRequest } = useSessionState(sessionId);
+    const { sendMessage, stopStream, clearApproval } = useSessionActions(sessionId);
+
+    // Local UI state
     const [inputValue, setInputValue] = useState("");
-    const [isStreaming, setIsStreaming] = useState(false);
-    const [streamingContent, setStreamingContent] = useState("");
-    const [thinkingSteps, setThinkingSteps] = useState<ThinkingStep[]>([]);
     const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
     const [expandedStreamingTools, setExpandedStreamingTools] = useState<Set<number>>(new Set());
-    const abortRef = useRef(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
+    // Reset expandedStreamingTools when a new stream starts
+    const prevStreamingRef = useRef(false);
     useEffect(() => {
-        setMessages(initialMessages);
-    }, [initialMessages]);
+        if (isStreaming && !prevStreamingRef.current) {
+            setExpandedStreamingTools(new Set());
+        }
+        prevStreamingRef.current = isStreaming;
+    }, [isStreaming]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, streamingContent]);
 
-    const handleSend = useCallback(async () => {
+    const handleSend = useCallback(() => {
         const text = inputValue.trim();
         if (!text || isStreaming) return;
-
         setInputValue("");
-        setIsStreaming(true);
-        setStreamingContent("");
-        setThinkingSteps([]);
-        setExpandedStreamingTools(new Set());
-        abortRef.current = false;
-
-        // Add user message
-        const userMsg: ChatMessage = {
-            role: "user",
-            content: text,
-            timestamp: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, userMsg]);
-
-        let fullContent = "";
-        const toolCalls: ToolCall[] = [];
-
-        try {
-            for await (const event of streamChat(text, sessionId)) {
-                if (abortRef.current) break;
-
-                switch (event.type) {
-                    case "token":
-                        fullContent += event.content || "";
-                        setStreamingContent(fullContent);
-                        break;
-
-                    case "tool_start":
-                        setThinkingSteps((prev) => [
-                            ...prev,
-                            {
-                                type: "tool_start",
-                                tool: event.tool || "",
-                                input: event.input,
-                            },
-                        ]);
-                        toolCalls.push({
-                            tool: event.tool || "",
-                            input: event.input || "",
-                        });
-                        break;
-
-                    case "tool_end":
-                        // Check for cache marker in output
-                        let output = event.output || "";
-                        let isCached = event.cached || false;
-                        if (output.startsWith("[CACHE_HIT]")) {
-                            output = output.substring(11); // Remove marker
-                            isCached = true;
-                        }
-
-                        setThinkingSteps((prev) => [
-                            ...prev,
-                            {
-                                type: "tool_end",
-                                tool: event.tool || "",
-                                output: output,
-                                cached: isCached,
-                            },
-                        ]);
-                        // Update matching tool call with output and cached flag
-                        for (const tc of toolCalls) {
-                            if (tc.tool === event.tool && !tc.output) {
-                                tc.output = output;
-                                if (isCached) {
-                                    tc.cached = true;
-                                }
-                                break;
-                            }
-                        }
-                        break;
-
-                    case "done":
-                        break;
-
-                    case "error":
-                        fullContent += `\n\n❌ Error: ${event.content}`;
-                        setStreamingContent(fullContent);
-                        break;
-                }
-            }
-        } catch (err) {
-            fullContent += `\n\n❌ Connection error: ${err}`;
-            setStreamingContent(fullContent);
-        }
-
-        // Finalize message
-        const assistantMsg: ChatMessage = {
-            role: "assistant",
-            content: fullContent,
-            timestamp: new Date().toISOString(),
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-        setStreamingContent("");
-        setThinkingSteps([]);
-        setIsStreaming(false);
-
-        // Notify parent if this was the first message
-        const isFirstMessage = messages.length === 0;
-        if (isFirstMessage && onMessageSent) {
-            onMessageSent(true);
-        }
-    }, [inputValue, isStreaming, sessionId, messages.length, onMessageSent]);
+        sendMessage(text);
+    }, [inputValue, isStreaming, sendMessage]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -355,9 +248,9 @@ export default function ChatPanel({
         }
     };
 
-    const handleStop = () => {
-        abortRef.current = true;
-    };
+    const handleStop = useCallback(() => {
+        stopStream();
+    }, [stopStream]);
 
     const toggleToolExpand = (index: number) => {
         setExpandedTools((prev) => {
@@ -631,6 +524,12 @@ export default function ChatPanel({
                     )}
                 </div>
             </div>
+
+            {/* Security Approval Dialog */}
+            <ApprovalDialog
+                request={approvalRequest}
+                onResolved={() => clearApproval()}
+            />
         </div>
     );
 }

@@ -19,7 +19,7 @@ __all__ = [
 
 
 def get_all_tools() -> list:
-    """Create and return all core tools + MCP tools."""
+    """Create and return all core tools + MCP tools, wrapped with security."""
     tools = [
         create_terminal_tool(),
         create_python_repl_tool(),
@@ -37,4 +37,14 @@ def get_all_tools() -> list:
             tools.extend(mcp_tools)
     except Exception:
         pass  # MCP unavailable — does not affect core tools
+
+    # Wrap all tools with security gate (only when security is enabled)
+    try:
+        from config import settings
+        if settings.security_enabled:
+            from security import wrap_all_tools
+            tools = wrap_all_tools(tools)
+    except Exception:
+        pass  # Security module unavailable — tools run unwrapped
+
     return tools

@@ -1,6 +1,6 @@
 """Agent Graph - LangChain Agent orchestration with LangGraph runtime."""
 import logging
-from typing import Optional
+from typing import Optional, Callable
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -11,6 +11,20 @@ from prompt_builder import build_system_prompt
 from tools import get_all_tools
 
 logger = logging.getLogger(__name__)
+
+# SSE callback for security approval requests
+_sse_approval_callback: Optional[Callable] = None
+
+
+def set_sse_approval_callback(callback: Optional[Callable]) -> None:
+    """Set the SSE callback used by SecurityGate for approval requests."""
+    global _sse_approval_callback
+    _sse_approval_callback = callback
+    try:
+        from security import security_gate
+        security_gate.set_sse_callback(callback)
+    except Exception:
+        pass
 
 
 def create_llm() -> ChatOpenAI:

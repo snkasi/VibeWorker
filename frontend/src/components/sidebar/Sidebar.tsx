@@ -20,6 +20,7 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { fetchSessions, createSession, deleteSession, fetchSkills, deleteSkill, type Session, type Skill } from "@/lib/api";
+import { useIsSessionStreaming, sessionStore } from "@/lib/sessionStore";
 import SkillsStoreDialog from "@/components/store/SkillsStoreDialog";
 import CachePanel from "./CachePanel";
 import MemoryPanel from "./MemoryPanel";
@@ -43,6 +44,43 @@ const NAV_ITEMS: { id: ViewMode; icon: React.ElementType; label: string }[] = [
     { id: "mcp", icon: Plug, label: "MCP" },
     { id: "cache", icon: Database, label: "缓存" },
 ];
+
+/** Session list item — extracted as a component to use hooks per-item */
+function SessionItem({ session, isSelected, onSelect, onDelete }: {
+    session: Session;
+    isSelected: boolean;
+    onSelect: () => void;
+    onDelete: (e: React.MouseEvent) => void;
+}) {
+    const isStreaming = useIsSessionStreaming(session.session_id);
+    return (
+        <button
+            className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all duration-150 group flex items-start gap-2 overflow-hidden ${isSelected
+                ? "bg-primary/10 text-primary font-medium"
+                : "hover:bg-accent text-foreground/70"
+                }`}
+            onClick={onSelect}
+        >
+            <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-50 mt-0.5" />
+            <span className="flex-1 min-w-0 line-clamp-2 break-words">
+                {session.title || session.preview || "新会话"}
+            </span>
+            {isStreaming && (
+                <span className="relative flex h-2 w-2 shrink-0 mt-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+                </span>
+            )}
+            <span className="text-[10px] text-muted-foreground/40 shrink-0">
+                {session.message_count}
+            </span>
+            <Trash2
+                className="w-3.5 h-3.5 opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:text-destructive shrink-0 transition-opacity"
+                onClick={onDelete}
+            />
+        </button>
+    );
+}
 
 export default function Sidebar({
     currentSessionId,
@@ -113,6 +151,7 @@ export default function Sidebar({
     ) => {
         e.stopPropagation();
         try {
+            sessionStore.removeSession(sessionId);
             await deleteSession(sessionId);
             await loadSessions();
             if (sessionId === currentSessionId) {
@@ -229,28 +268,13 @@ export default function Sidebar({
                                     </div>
                                 )}
                                 {sessions.map((session) => (
-                                    <button
+                                    <SessionItem
                                         key={session.session_id}
-                                        className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all duration-150 group flex items-start gap-2 overflow-hidden ${session.session_id === currentSessionId
-                                            ? "bg-primary/10 text-primary font-medium"
-                                            : "hover:bg-accent text-foreground/70"
-                                            }`}
-                                        onClick={() => onSessionSelect(session.session_id)}
-                                    >
-                                        <MessageSquare className="w-3.5 h-3.5 shrink-0 opacity-50 mt-0.5" />
-                                        <span className="flex-1 min-w-0 line-clamp-2 break-words">
-                                            {session.title || session.preview || "新会话"}
-                                        </span>
-                                        <span className="text-[10px] text-muted-foreground/40 shrink-0">
-                                            {session.message_count}
-                                        </span>
-                                        <Trash2
-                                            className="w-3.5 h-3.5 opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:text-destructive shrink-0 transition-opacity"
-                                            onClick={(e) =>
-                                                handleDeleteSession(e, session.session_id)
-                                            }
-                                        />
-                                    </button>
+                                        session={session}
+                                        isSelected={session.session_id === currentSessionId}
+                                        onSelect={() => onSessionSelect(session.session_id)}
+                                        onDelete={(e) => handleDeleteSession(e, session.session_id)}
+                                    />
                                 ))}
                             </>
                         )}

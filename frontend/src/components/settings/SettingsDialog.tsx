@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon } from "lucide-react";
+import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon, Shield, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -133,6 +133,17 @@ export default function SettingsDialog() {
         enable_prompt_cache: true,
         enable_translate_cache: true,
         mcp_enabled: true,
+        security_enabled: true,
+        security_level: "standard",
+        security_approval_timeout: 60,
+        security_audit_enabled: true,
+        security_ssrf_protection: true,
+        security_sensitive_file_protection: true,
+        security_python_sandbox: true,
+        security_rate_limit_enabled: true,
+        security_docker_enabled: false,
+        security_docker_network: "none",
+        data_dir: "~/.vibeworker/",
         theme: "light",
     });
 
@@ -142,7 +153,8 @@ export default function SettingsDialog() {
             fetchSettings()
                 .then((data) => {
                     const saved = localStorage.getItem("vw-theme") as "light" | "dark" | null;
-                    setForm({ ...data, theme: saved || data.theme || "light" });
+                    // Merge: keep form defaults as fallback for any missing fields from backend
+                    setForm((prev) => ({ ...prev, ...data, theme: saved || data.theme || "light" }));
                 })
                 .catch(() => { })
                 .finally(() => setLoading(false));
@@ -202,7 +214,7 @@ export default function SettingsDialog() {
                     </div>
                 ) : (
                     <Tabs defaultValue="general" className="w-full">
-                        <TabsList className="grid w-full grid-cols-4 mb-4">
+                        <TabsList className="grid w-full grid-cols-5 mb-4">
                             <TabsTrigger value="general" className="text-xs">
                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-500 mr-1.5" />
                                 通用
@@ -218,6 +230,10 @@ export default function SettingsDialog() {
                             <TabsTrigger value="cache" className="text-xs">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5" />
                                 缓存
+                            </TabsTrigger>
+                            <TabsTrigger value="security" className="text-xs">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5" />
+                                安全
                             </TabsTrigger>
                         </TabsList>
 
@@ -249,6 +265,22 @@ export default function SettingsDialog() {
                                         暗黑模式
                                     </button>
                                 </div>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                                    <FolderOpen className="w-3.5 h-3.5" />
+                                    数据目录
+                                </label>
+                                <input
+                                    type="text"
+                                    value={form.data_dir}
+                                    onChange={(e) => updateField("data_dir", e.target.value)}
+                                    placeholder="~/.vibeworker/"
+                                    className="w-full h-8 px-3 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all font-mono"
+                                />
+                                <p className="text-[10px] text-muted-foreground/60">
+                                    所有用户数据（会话、记忆、技能、文件）存储于此，修改后需重启后端生效
+                                </p>
                             </div>
                         </TabsContent>
 
@@ -428,6 +460,131 @@ export default function SettingsDialog() {
                                 onChange={(v) => updateField("mcp_enabled", v)}
                                 hint="(MCP Server 连接与工具缓存)"
                             />
+                        </TabsContent>
+
+                        {/* Security Tab */}
+                        <TabsContent value="security" className="space-y-3 mt-0">
+                            {/* Master Switch */}
+                            <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+                                <div className="flex items-center gap-2">
+                                    <Shield className={`w-4 h-4 ${form.security_enabled ? "text-green-500" : "text-muted-foreground/40"}`} />
+                                    <div>
+                                        <div className="text-xs font-medium">安全系统总开关</div>
+                                        <div className="text-[10px] text-muted-foreground/60">关闭后所有安全功能停用，工具直接执行</div>
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => updateField("security_enabled", !form.security_enabled)}
+                                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${form.security_enabled ? "bg-primary" : "bg-border"}`}
+                                >
+                                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${form.security_enabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                                </button>
+                            </div>
+
+                            <div className={`space-y-3 ${!form.security_enabled ? "opacity-40 pointer-events-none" : ""}`}>
+                                {/* Security Level */}
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-muted-foreground">安全等级</label>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {[
+                                            { value: "relaxed", label: "宽松", desc: "全部自动执行" },
+                                            { value: "standard", label: "标准", desc: "危险操作需审批" },
+                                            { value: "strict", label: "严格", desc: "大部分需审批" },
+                                        ].map((level) => (
+                                            <button
+                                                key={level.value}
+                                                type="button"
+                                                onClick={() => updateField("security_level", level.value)}
+                                                className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border text-xs font-medium transition-all ${
+                                                    form.security_level === level.value
+                                                        ? "border-primary bg-primary/10 text-primary"
+                                                        : "border-border bg-background text-muted-foreground hover:border-primary/30"
+                                                }`}
+                                            >
+                                                <Shield className={`w-3.5 h-3.5 ${
+                                                    level.value === "relaxed" ? "text-green-500" :
+                                                    level.value === "standard" ? "text-amber-500" : "text-red-500"
+                                                }`} />
+                                                <span>{level.label}</span>
+                                                <span className="text-[10px] text-muted-foreground/60">{level.desc}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Approval Timeout */}
+                                <SettingsField
+                                    label="审批超时 (秒)"
+                                    value={String(form.security_approval_timeout)}
+                                    onChange={(v) => updateField("security_approval_timeout", parseFloat(v) || 60)}
+                                    type="number"
+                                    placeholder="60"
+                                />
+
+                                {/* Sub-feature Toggles */}
+                                <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-muted-foreground">安全子功能</label>
+                                    <div className="space-y-1">
+                                        {[
+                                            { key: "security_python_sandbox" as const, label: "Python 沙箱", hint: "限制危险 import 和 builtins" },
+                                            { key: "security_ssrf_protection" as const, label: "SSRF 防护", hint: "阻止访问内网地址" },
+                                            { key: "security_sensitive_file_protection" as const, label: "敏感文件保护", hint: "阻止读取 .env / .key 等" },
+                                            { key: "security_rate_limit_enabled" as const, label: "工具调用限速", hint: "滑动窗口限制频率" },
+                                            { key: "security_audit_enabled" as const, label: "审计日志", hint: "记录所有工具执行" },
+                                        ].map((item) => (
+                                            <div key={item.key} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-muted/30 transition-colors">
+                                                <div>
+                                                    <span className="text-xs">{item.label}</span>
+                                                    <span className="text-[10px] text-muted-foreground/50 ml-1.5">{item.hint}</span>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => updateField(item.key, !form[item.key])}
+                                                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${form[item.key] ? "bg-primary" : "bg-border"}`}
+                                                >
+                                                    <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform ${form[item.key] ? "translate-x-3.5" : "translate-x-0.5"}`} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Docker Sandbox */}
+                                <div className="space-y-1.5">
+                                    <ToggleField
+                                        label="Docker 沙箱"
+                                        checked={form.security_docker_enabled}
+                                        onChange={(v) => updateField("security_docker_enabled", v)}
+                                        hint="(需安装 Docker，可选)"
+                                    />
+                                    {form.security_docker_enabled && (
+                                        <div className="space-y-1.5 ml-4">
+                                            <label className="text-xs font-medium text-muted-foreground">Docker 网络</label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {[
+                                                    { value: "none", label: "无网络", desc: "完全隔离" },
+                                                    { value: "bridge", label: "桥接", desc: "允许网络" },
+                                                ].map((net) => (
+                                                    <button
+                                                        key={net.value}
+                                                        type="button"
+                                                        onClick={() => updateField("security_docker_network", net.value)}
+                                                        className={`flex flex-col items-center gap-0.5 py-1.5 rounded-lg border text-xs transition-all ${
+                                                            form.security_docker_network === net.value
+                                                                ? "border-primary bg-primary/10 text-primary"
+                                                                : "border-border bg-background text-muted-foreground hover:border-primary/30"
+                                                        }`}
+                                                    >
+                                                        <span className="font-medium">{net.label}</span>
+                                                        <span className="text-[10px] text-muted-foreground/60">{net.desc}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </TabsContent>
                     </Tabs>
                 )}

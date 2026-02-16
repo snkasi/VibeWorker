@@ -18,7 +18,7 @@ import uvicorn
 
 from config import settings, PROJECT_ROOT
 from sessions_manager import session_manager
-from graph.agent import run_agent
+from graph.agent import run_agent, set_sse_approval_callback
 from tools.rag_tool import rebuild_index
 from memory_manager import memory_manager
 
@@ -40,6 +40,24 @@ async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     logger.info("VibeWorker Backend started on port %d", settings.port)
     logger.info("Project root: %s", PROJECT_ROOT)
+    logger.info("Data directory: %s", settings.get_data_path())
+
+    # Initialize Security Gate
+    try:
+        from security import security_gate, docker_sandbox
+        security_gate.configure(
+            security_level=settings.security_level,
+            approval_timeout=settings.security_approval_timeout,
+            audit_enabled=settings.security_audit_enabled,
+        )
+        if settings.security_docker_enabled:
+            docker_sandbox.configure(
+                enabled=True,
+                network=settings.security_docker_network,
+            )
+        logger.info(f"Security gate initialized: level={settings.security_level}")
+    except Exception as e:
+        logger.warning(f"Security module initialization failed (non-fatal): {e}")
 
     # Initialize MCP servers
     if settings.mcp_enabled:
@@ -202,67 +220,163 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
     full_response = ""
     tool_calls_log = []
 
+    # Queue for approval requests from SecurityGate
+    approval_queue: asyncio.Queue = asyncio.Queue()
+
+    async def sse_approval_callback(event_data: dict):
+        """Callback invoked by SecurityGate to send approval requests via SSE."""
+        await approval_queue.put(event_data)
+
+    # Register SSE callback with SecurityGate
+    set_sse_approval_callback(sse_approval_callback)
+
     try:
-        async for event in run_agent(message, history, stream=True):
-            event_type = event.get("type", "")
+        # Wrap the agent stream to interleave approval events
+        agent_gen = run_agent(message, history, stream=True)
+        agent_task = asyncio.ensure_future(_next_event(agent_gen))
 
-            if event_type == "token":
-                content = event.get("content", "")
-                full_response += content
-                sse_data = json.dumps({"type": "token", "content": content}, ensure_ascii=False)
-                yield f"data: {sse_data}\n\n"
+        while True:
+            # Check for approval events in queue
+            while not approval_queue.empty():
+                try:
+                    approval_event = approval_queue.get_nowait()
+                    sse_data = json.dumps(approval_event, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+                except asyncio.QueueEmpty:
+                    break
 
-            elif event_type == "tool_start":
-                tool_calls_log.append({
-                    "tool": event["tool"],
-                    "input": event.get("input", ""),
-                })
-                sse_data = json.dumps({
-                    "type": "tool_start",
-                    "tool": event["tool"],
-                    "input": event.get("input", ""),
-                }, ensure_ascii=False)
-                yield f"data: {sse_data}\n\n"
+            # Wait for next agent event or approval event
+            if agent_task.done():
+                try:
+                    event = agent_task.result()
+                except StopAsyncIteration:
+                    break
 
-            elif event_type == "tool_end":
-                is_cached = event.get("cached", False)
-                for tc in tool_calls_log:
-                    if tc["tool"] == event["tool"] and "output" not in tc:
-                        tc["output"] = event.get("output", "")
-                        if is_cached:
-                            tc["cached"] = True
-                        break
-                sse_data = json.dumps({
-                    "type": "tool_end",
-                    "tool": event["tool"],
-                    "output": event.get("output", "")[:1000],
-                    "cached": is_cached,
-                }, ensure_ascii=False)
-                yield f"data: {sse_data}\n\n"
+                # Process the agent event (same as before)
+                event_type = event.get("type", "")
 
-            elif event_type == "done":
-                # Save assistant response to session
-                if full_response:
-                    session_manager.save_message(
-                        session_id, "assistant", full_response,
-                        tool_calls=tool_calls_log if tool_calls_log else None,
-                    )
+                if event_type == "token":
+                    content = event.get("content", "")
+                    full_response += content
+                    sse_data = json.dumps({"type": "token", "content": content}, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
 
-                # Auto-extract memories if enabled
-                if settings.memory_auto_extract:
+                elif event_type == "tool_start":
+                    tool_calls_log.append({
+                        "tool": event["tool"],
+                        "input": event.get("input", ""),
+                    })
+                    sse_data = json.dumps({
+                        "type": "tool_start",
+                        "tool": event["tool"],
+                        "input": event.get("input", ""),
+                    }, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+
+                elif event_type == "tool_end":
+                    is_cached = event.get("cached", False)
+                    for tc in tool_calls_log:
+                        if tc["tool"] == event["tool"] and "output" not in tc:
+                            tc["output"] = event.get("output", "")
+                            if is_cached:
+                                tc["cached"] = True
+                            break
+                    sse_data = json.dumps({
+                        "type": "tool_end",
+                        "tool": event["tool"],
+                        "output": event.get("output", "")[:1000],
+                        "cached": is_cached,
+                    }, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+
+                elif event_type == "done":
+                    # Save assistant response to session
+                    if full_response:
+                        session_manager.save_message(
+                            session_id, "assistant", full_response,
+                            tool_calls=tool_calls_log if tool_calls_log else None,
+                        )
+
+                    # Auto-extract memories if enabled
+                    if settings.memory_auto_extract:
+                        try:
+                            recent_messages = session_manager.get_session(session_id)[-6:]
+                            asyncio.create_task(memory_manager.auto_extract(recent_messages))
+                        except Exception as e:
+                            logger.warning(f"Auto-extract hook failed: {e}")
+
+                    sse_data = json.dumps({"type": "done"}, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+                    break
+
+                # Start next event fetch
+                agent_task = asyncio.ensure_future(_next_event(agent_gen))
+            else:
+                # Wait a bit before checking again
+                await asyncio.sleep(0.01)
+                # Also flush any pending approval events
+                while not approval_queue.empty():
                     try:
-                        recent_messages = session_manager.get_session(session_id)[-6:]
-                        asyncio.create_task(memory_manager.auto_extract(recent_messages))
-                    except Exception as e:
-                        logger.warning(f"Auto-extract hook failed: {e}")
-
-                sse_data = json.dumps({"type": "done"}, ensure_ascii=False)
-                yield f"data: {sse_data}\n\n"
+                        approval_event = approval_queue.get_nowait()
+                        sse_data = json.dumps(approval_event, ensure_ascii=False)
+                        yield f"data: {sse_data}\n\n"
+                    except asyncio.QueueEmpty:
+                        break
 
     except Exception as e:
         logger.error(f"Error in agent stream: {e}", exc_info=True)
         error_data = json.dumps({"type": "error", "content": str(e)}, ensure_ascii=False)
         yield f"data: {error_data}\n\n"
+    finally:
+        set_sse_approval_callback(None)
+
+
+async def _next_event(gen):
+    """Helper to get next event from async generator."""
+    return await gen.__anext__()
+
+
+# ============================================
+# API Routes: Security / Approval
+# ============================================
+class ApprovalRequest(BaseModel):
+    request_id: str
+    approved: bool
+
+
+@app.post("/api/approve")
+async def approve_tool(request: ApprovalRequest):
+    """Approve or deny a pending tool execution request."""
+    try:
+        from security import security_gate
+        resolved = security_gate.resolve_approval(request.request_id, request.approved)
+        if resolved:
+            return {"status": "ok", "request_id": request.request_id, "approved": request.approved}
+        else:
+            raise HTTPException(status_code=404, detail="Approval request not found or expired")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to process approval: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/security/status")
+async def security_status():
+    """Get current security configuration and status."""
+    try:
+        from security import security_gate, rate_limiter, docker_sandbox
+        return {
+            "security_level": security_gate.security_level.value,
+            "pending_approvals": security_gate.get_pending_count(),
+            "rate_limits": rate_limiter.get_stats(),
+            "docker_available": docker_sandbox.available if settings.security_docker_enabled else None,
+        }
+    except Exception as e:
+        return {
+            "security_level": settings.security_level,
+            "error": str(e),
+        }
 
 
 # ============================================
@@ -270,14 +384,28 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
 # ============================================
 @app.get("/api/files")
 async def read_file(path: str = Query(..., description="Relative file path")):
-    """Read the content of a file within the project."""
-    file_path = (PROJECT_ROOT / path).resolve()
+    """Read the content of a file. Resolves relative paths against data_dir first, then PROJECT_ROOT."""
+    data_path = settings.get_data_path()
+    # Try data_dir first, then PROJECT_ROOT
+    file_path = (data_path / path).resolve()
+    if not file_path.exists():
+        file_path = (PROJECT_ROOT / path).resolve()
 
-    # Security check
+    # Security check: must be within data_dir or PROJECT_ROOT
+    in_data = False
+    in_project = False
+    try:
+        file_path.relative_to(data_path)
+        in_data = True
+    except ValueError:
+        pass
     try:
         file_path.relative_to(PROJECT_ROOT)
+        in_project = True
     except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied: path outside project")
+        pass
+    if not in_data and not in_project:
+        raise HTTPException(status_code=403, detail="Access denied: path outside allowed directories")
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -294,22 +422,15 @@ async def read_file(path: str = Query(..., description="Relative file path")):
 
 @app.post("/api/files")
 async def write_file(request: FileWriteRequest):
-    """Save content to a file within the project (for Memory/Skill editing)."""
-    file_path = (PROJECT_ROOT / request.path).resolve()
+    """Save content to a file within the data directory."""
+    data_path = settings.get_data_path()
+    file_path = (data_path / request.path).resolve()
 
-    # Security check
+    # Security check: only allow writes within data_dir
     try:
-        file_path.relative_to(PROJECT_ROOT)
+        file_path.relative_to(data_path)
     except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied: path outside project")
-
-    # Only allow editing certain directories
-    allowed_prefixes = ["memory", "workspace", "skills", "knowledge", ".cache"]
-    if not any(request.path.startswith(prefix) for prefix in allowed_prefixes):
-        raise HTTPException(
-            status_code=403,
-            detail="Can only edit files in memory/, workspace/, skills/, knowledge/, or .cache/ directories",
-        )
+        raise HTTPException(status_code=403, detail="Access denied: can only write to data directory")
 
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -321,14 +442,28 @@ async def write_file(request: FileWriteRequest):
 
 @app.get("/api/files/tree")
 async def file_tree(root: str = Query("", description="Root directory to list")):
-    """Get file tree for the sidebar file explorer."""
-    base = PROJECT_ROOT / root if root else PROJECT_ROOT
+    """Get file tree for the sidebar file explorer (defaults to data directory)."""
+    data_path = settings.get_data_path()
+    base = data_path / root if root else data_path
     base = base.resolve()
 
+    # Allow data_dir or PROJECT_ROOT
+    in_data = False
+    in_project = False
+    try:
+        base.relative_to(data_path)
+        in_data = True
+    except ValueError:
+        pass
     try:
         base.relative_to(PROJECT_ROOT)
+        in_project = True
     except ValueError:
+        pass
+    if not in_data and not in_project:
         raise HTTPException(status_code=403, detail="Access denied")
+
+    ref_base = data_path if in_data else PROJECT_ROOT
 
     if not base.exists():
         raise HTTPException(status_code=404, detail="Directory not found")
@@ -342,7 +477,7 @@ async def file_tree(root: str = Query("", description="Root directory to list"))
                 # Skip hidden files and __pycache__
                 if entry.name.startswith(".") or entry.name == "__pycache__":
                     continue
-                rel = str(entry.relative_to(PROJECT_ROOT)).replace("\\", "/")
+                rel = str(entry.relative_to(ref_base)).replace("\\", "/")
                 if entry.is_dir():
                     children = _build_tree(entry, depth + 1, max_depth)
                     items.append({
@@ -471,7 +606,10 @@ async def list_skills():
             name, description = _parse_skill_frontmatter(skill_md)
             if not name:
                 name = skill_dir.name
-            rel_path = str(skill_md.relative_to(PROJECT_ROOT)).replace("\\", "/")
+            try:
+                rel_path = str(skill_md.relative_to(settings.get_data_path())).replace("\\", "/")
+            except ValueError:
+                rel_path = str(skill_md.relative_to(PROJECT_ROOT)).replace("\\", "/")
             skills.append({
                 "name": name,
                 "description": description,
@@ -878,11 +1016,24 @@ class SettingsUpdateRequest(BaseModel):
     # MCP configuration
     mcp_enabled: Optional[bool] = None
     mcp_tool_cache_ttl: Optional[int] = None
+    # Security configuration
+    security_enabled: Optional[bool] = None
+    security_level: Optional[str] = None
+    security_approval_timeout: Optional[float] = None
+    security_audit_enabled: Optional[bool] = None
+    security_ssrf_protection: Optional[bool] = None
+    security_sensitive_file_protection: Optional[bool] = None
+    security_python_sandbox: Optional[bool] = None
+    security_rate_limit_enabled: Optional[bool] = None
+    security_docker_enabled: Optional[bool] = None
+    security_docker_network: Optional[str] = None
+    # Data directory
+    data_dir: Optional[str] = None
 
 
 def _read_env_file() -> dict:
-    """Read .env file and parse into dict."""
-    env_path = PROJECT_ROOT / ".env"
+    """Read user .env file from data directory and parse into dict."""
+    env_path = settings.get_env_path()
     result = {}
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
@@ -896,8 +1047,8 @@ def _read_env_file() -> dict:
 
 
 def _write_env_file(env_dict: dict) -> None:
-    """Write dict back to .env file, preserving comments and structure."""
-    env_path = PROJECT_ROOT / ".env"
+    """Write dict back to user .env file, preserving comments and structure."""
+    env_path = settings.get_env_path()
     lines = []
     if env_path.exists():
         original_lines = env_path.read_text(encoding="utf-8").splitlines()
@@ -959,6 +1110,19 @@ async def get_settings():
         # MCP configuration
         "mcp_enabled": env.get("MCP_ENABLED", "true").lower() == "true",
         "mcp_tool_cache_ttl": int(env.get("MCP_TOOL_CACHE_TTL", "3600")),
+        # Security configuration
+        "security_enabled": env.get("SECURITY_ENABLED", "true").lower() == "true",
+        "security_level": env.get("SECURITY_LEVEL", "standard"),
+        "security_approval_timeout": float(env.get("SECURITY_APPROVAL_TIMEOUT", "60")),
+        "security_audit_enabled": env.get("SECURITY_AUDIT_ENABLED", "true").lower() == "true",
+        "security_ssrf_protection": env.get("SECURITY_SSRF_PROTECTION", "true").lower() == "true",
+        "security_sensitive_file_protection": env.get("SECURITY_SENSITIVE_FILE_PROTECTION", "true").lower() == "true",
+        "security_python_sandbox": env.get("SECURITY_PYTHON_SANDBOX", "true").lower() == "true",
+        "security_rate_limit_enabled": env.get("SECURITY_RATE_LIMIT_ENABLED", "true").lower() == "true",
+        "security_docker_enabled": env.get("SECURITY_DOCKER_ENABLED", "false").lower() == "true",
+        "security_docker_network": env.get("SECURITY_DOCKER_NETWORK", "none"),
+        # Data directory
+        "data_dir": env.get("DATA_DIR", "~/.vibeworker/"),
     }
 
 
@@ -998,6 +1162,19 @@ async def update_settings(request: SettingsUpdateRequest):
         # MCP configuration
         "MCP_ENABLED": str(request.mcp_enabled).lower() if request.mcp_enabled is not None else None,
         "MCP_TOOL_CACHE_TTL": str(request.mcp_tool_cache_ttl) if request.mcp_tool_cache_ttl is not None else None,
+        # Security configuration
+        "SECURITY_ENABLED": str(request.security_enabled).lower() if request.security_enabled is not None else None,
+        "SECURITY_LEVEL": request.security_level if request.security_level is not None else None,
+        "SECURITY_APPROVAL_TIMEOUT": str(request.security_approval_timeout) if request.security_approval_timeout is not None else None,
+        "SECURITY_AUDIT_ENABLED": str(request.security_audit_enabled).lower() if request.security_audit_enabled is not None else None,
+        "SECURITY_SSRF_PROTECTION": str(request.security_ssrf_protection).lower() if request.security_ssrf_protection is not None else None,
+        "SECURITY_SENSITIVE_FILE_PROTECTION": str(request.security_sensitive_file_protection).lower() if request.security_sensitive_file_protection is not None else None,
+        "SECURITY_PYTHON_SANDBOX": str(request.security_python_sandbox).lower() if request.security_python_sandbox is not None else None,
+        "SECURITY_RATE_LIMIT_ENABLED": str(request.security_rate_limit_enabled).lower() if request.security_rate_limit_enabled is not None else None,
+        "SECURITY_DOCKER_ENABLED": str(request.security_docker_enabled).lower() if request.security_docker_enabled is not None else None,
+        "SECURITY_DOCKER_NETWORK": request.security_docker_network if request.security_docker_network is not None else None,
+        # Data directory
+        "DATA_DIR": request.data_dir if request.data_dir is not None else None,
     }
     for env_key, value in update_map.items():
         if value is not None:

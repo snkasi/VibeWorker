@@ -45,12 +45,15 @@ export interface FileNode {
 }
 
 export interface SSEEvent {
-  type: "token" | "tool_start" | "tool_end" | "done" | "error";
+  type: "token" | "tool_start" | "tool_end" | "done" | "error" | "approval_request";
   content?: string;
   tool?: string;
   input?: string;
   output?: string;
   cached?: boolean;  // Cache indicator
+  // Approval request fields
+  request_id?: string;
+  risk_level?: "safe" | "warn" | "dangerous" | "blocked";
 }
 
 // ============================================
@@ -63,7 +66,8 @@ export interface SSEEvent {
  */
 export async function* streamChat(
   message: string,
-  sessionId: string = "main_session"
+  sessionId: string = "main_session",
+  signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
@@ -73,6 +77,7 @@ export async function* streamChat(
       session_id: sessionId,
       stream: true,
     }),
+    signal,
   });
 
   if (!response.ok) {
@@ -248,6 +253,19 @@ export interface SettingsData {
   enable_prompt_cache: boolean;
   enable_translate_cache: boolean;
   mcp_enabled: boolean;
+  // Security configuration
+  security_enabled: boolean;
+  security_level: string;
+  security_approval_timeout: number;
+  security_audit_enabled: boolean;
+  security_ssrf_protection: boolean;
+  security_sensitive_file_protection: boolean;
+  security_python_sandbox: boolean;
+  security_rate_limit_enabled: boolean;
+  security_docker_enabled: boolean;
+  security_docker_network: string;
+  // Data directory
+  data_dir: string;
   // Theme (light/dark) - frontend-only, stored in localStorage
   theme?: "light" | "dark";
 }
@@ -267,6 +285,37 @@ export async function updateSettings(data: SettingsData): Promise<void> {
     const err = await res.json();
     throw new Error(err.detail || "Failed to save settings");
   }
+}
+
+// ============================================
+// Security / Approval API
+// ============================================
+export async function sendApproval(
+  requestId: string,
+  approved: boolean
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ request_id: requestId, approved }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to send approval");
+  }
+}
+
+export interface SecurityStatus {
+  security_level: string;
+  pending_approvals: number;
+  rate_limits: Record<string, { used: number; limit: number; window_seconds: number }>;
+  docker_available: boolean | null;
+}
+
+export async function fetchSecurityStatus(): Promise<SecurityStatus> {
+  const res = await fetch(`${API_BASE}/api/security/status`);
+  if (!res.ok) throw new Error("Failed to fetch security status");
+  return await res.json();
 }
 
 // ============================================
