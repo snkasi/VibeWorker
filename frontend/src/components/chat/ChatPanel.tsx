@@ -11,6 +11,7 @@ import { type ToolCall } from "@/lib/api";
 import { useSessionState, useSessionActions } from "@/lib/sessionStore";
 import type { ThinkingStep } from "@/lib/sessionStore";
 import ApprovalDialog from "./ApprovalDialog";
+import PlanCard from "./PlanCard";
 
 /** Custom code renderer with syntax highlighting for ReactMarkdown */
 const markdownCodeComponents = {
@@ -62,6 +63,8 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
     search_knowledge_base: { label: "检索知识库", icon: "🔍" },
     memory_write: { label: "存储记忆", icon: "💾" },
     memory_search: { label: "搜索记忆", icon: "🧠" },
+    plan_create: { label: "制定计划", icon: "📋" },
+    plan_update: { label: "更新进度", icon: "📊" },
 };
 
 function getToolDisplay(toolName: string) {
@@ -213,7 +216,7 @@ export default function ChatPanel({
     onFileOpen,
 }: ChatPanelProps) {
     // Store-driven state
-    const { messages, isStreaming, streamingContent, thinkingSteps, approvalRequest } = useSessionState(sessionId);
+    const { messages, isStreaming, streamingContent, thinkingSteps, approvalRequest, currentPlan } = useSessionState(sessionId);
     const { sendMessage, stopStream, clearApproval, addSessionAllowedTool } = useSessionActions(sessionId);
 
     // Local UI state
@@ -307,6 +310,10 @@ export default function ChatPanel({
                             </div>
                         ) : (
                             <div className="max-w-[90%]">
+                                {/* Historical Plan Card */}
+                                {msg.plan && (
+                                    <PlanCard plan={msg.plan} defaultCollapsed />
+                                )}
                                 {/* Tool Calls (Collapsible Thoughts) */}
                                 {msg.tool_calls && msg.tool_calls.length > 0 && (
                                     <div className="mb-3 space-y-2">
@@ -369,6 +376,10 @@ export default function ChatPanel({
                 {/* Streaming response */}
                 {isStreaming && (
                     <div className="mb-4 animate-fade-in-up">
+                        {/* Live Plan Card */}
+                        {currentPlan && (
+                            <PlanCard plan={currentPlan} isLive />
+                        )}
                         {/* Live thinking steps - grouped by tool */}
                         {thinkingSteps.length > 0 && (
                             <div className="mb-3 space-y-2">

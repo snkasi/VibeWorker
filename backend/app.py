@@ -16,10 +16,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 
-from config import settings, PROJECT_ROOT
+from config import settings, PROJECT_ROOT, reload_settings
 from sessions_manager import session_manager
 from session_context import set_session_id
 from graph.agent import run_agent, set_sse_approval_callback
+from tools.plan_tool import set_plan_sse_callback, set_plan_event_loop
 from tools.rag_tool import rebuild_index
 from memory_manager import memory_manager
 
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
     # Startup
     settings.ensure_dirs()
     logger.info("VibeWorker Backend started on port %d", settings.port)
+    logger.info("Verifying code version: Hot-Reload Patch Applied")
     logger.info("Project root: %s", PROJECT_ROOT)
     logger.info("Data directory: %s", settings.get_data_path())
 
@@ -234,8 +236,17 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
         """Callback invoked by SecurityGate to send approval requests via SSE."""
         await approval_queue.put(event_data)
 
-    # Register SSE callback with SecurityGate
+    # Queue for plan events from Plan tools
+    plan_queue: asyncio.Queue = asyncio.Queue()
+
+    async def sse_plan_callback(event_data: dict):
+        """Callback invoked by plan tools to send plan events via SSE."""
+        await plan_queue.put(event_data)
+
+    # Register SSE callbacks
     set_sse_approval_callback(sse_approval_callback)
+    set_plan_sse_callback(sse_plan_callback)
+    set_plan_event_loop(asyncio.get_event_loop())
 
     try:
         # Wrap the agent stream to interleave approval events
@@ -248,6 +259,15 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
                 try:
                     approval_event = approval_queue.get_nowait()
                     sse_data = json.dumps(approval_event, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+                except asyncio.QueueEmpty:
+                    break
+
+            # Check for plan events in queue
+            while not plan_queue.empty():
+                try:
+                    plan_event = plan_queue.get_nowait()
+                    sse_data = json.dumps(plan_event, ensure_ascii=False)
                     yield f"data: {sse_data}\n\n"
                 except asyncio.QueueEmpty:
                     break
@@ -329,6 +349,14 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
                         yield f"data: {sse_data}\n\n"
                     except asyncio.QueueEmpty:
                         break
+                # Also flush any pending plan events
+                while not plan_queue.empty():
+                    try:
+                        plan_event = plan_queue.get_nowait()
+                        sse_data = json.dumps(plan_event, ensure_ascii=False)
+                        yield f"data: {sse_data}\n\n"
+                    except asyncio.QueueEmpty:
+                        break
 
     except Exception as e:
         logger.error(f"Error in agent stream: {e}", exc_info=True)
@@ -336,6 +364,7 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
         yield f"data: {error_data}\n\n"
     finally:
         set_sse_approval_callback(None)
+        set_plan_sse_callback(None)
 
 
 async def _next_event(gen):
@@ -904,10 +933,12 @@ async def translate_content(request: TranslateRequest):
         logger.warning(f"Translation cache error (falling back to translate): {e}")
 
     try:
-        # Use translation model config if set, otherwise fall back to main LLM config
-        api_key = settings.translate_api_key or settings.llm_api_key
-        api_base = settings.translate_api_base or settings.llm_api_base
-        model = settings.translate_model or settings.llm_model
+        # Use model pool to resolve translation model config
+        from model_pool import resolve_model as _resolve
+        _cfg = _resolve("translate")
+        api_key = _cfg["api_key"]
+        api_base = _cfg["api_base"]
+        model = _cfg["model"]
 
         llm = ChatOpenAI(
             api_key=api_key,
@@ -1029,6 +1060,8 @@ class SettingsUpdateRequest(BaseModel):
     # MCP configuration
     mcp_enabled: Optional[bool] = None
     mcp_tool_cache_ttl: Optional[int] = None
+    # Plan configuration
+    plan_enabled: Optional[bool] = None
     # Security configuration
     security_enabled: Optional[bool] = None
     security_level: Optional[str] = None
@@ -1132,6 +1165,8 @@ async def get_settings():
         # MCP configuration
         "mcp_enabled": env.get("MCP_ENABLED", "true").lower() == "true",
         "mcp_tool_cache_ttl": int(env.get("MCP_TOOL_CACHE_TTL", "3600")),
+        # Plan configuration
+        "plan_enabled": env.get("PLAN_ENABLED", "true").lower() == "true",
         # Security configuration
         "security_enabled": env.get("SECURITY_ENABLED", "true").lower() == "true",
         "security_level": env.get("SECURITY_LEVEL", "standard"),
@@ -1184,6 +1219,8 @@ async def update_settings(request: SettingsUpdateRequest):
         # MCP configuration
         "MCP_ENABLED": str(request.mcp_enabled).lower() if request.mcp_enabled is not None else None,
         "MCP_TOOL_CACHE_TTL": str(request.mcp_tool_cache_ttl) if request.mcp_tool_cache_ttl is not None else None,
+        # Plan configuration
+        "PLAN_ENABLED": str(request.plan_enabled).lower() if request.plan_enabled is not None else None,
         # Security configuration
         "SECURITY_ENABLED": str(request.security_enabled).lower() if request.security_enabled is not None else None,
         "SECURITY_LEVEL": request.security_level if request.security_level is not None else None,
@@ -1202,7 +1239,85 @@ async def update_settings(request: SettingsUpdateRequest):
         if value is not None:
             env[env_key] = value
     _write_env_file(env)
-    return {"status": "ok", "message": "Settings saved. Restart backend to apply changes."}
+    reload_settings()
+    # Clear prompt cache so new settings (e.g. model change) take effect immediately
+    try:
+        from cache import prompt_cache
+        prompt_cache.clear()
+    except Exception:
+        pass
+    logger.info("Settings reloaded after update (prompt cache cleared)")
+    return {"status": "ok", "message": "Settings saved and applied."}
+
+
+class TestModelRequest(BaseModel):
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    model: Optional[str] = None
+    model_type: str = "llm"  # "llm", "embedding", "translate"
+
+
+@app.post("/api/settings/test")
+async def test_model_connection(request: TestModelRequest):
+    """Test model connectivity by sending a short prompt."""
+    from langchain_openai import ChatOpenAI
+
+    # Determine which config to use based on model_type
+    if request.model_type == "embedding":
+        api_key = request.api_key or settings.embedding_api_key or settings.llm_api_key
+        api_base = request.api_base or settings.embedding_api_base or settings.llm_api_base
+        model = request.model or settings.embedding_model or settings.llm_model
+    elif request.model_type == "translate":
+        api_key = request.api_key or settings.translate_api_key or settings.llm_api_key
+        api_base = request.api_base or settings.translate_api_base or settings.llm_api_base
+        model = request.model or settings.translate_model or settings.llm_model
+    else:
+        api_key = request.api_key or settings.llm_api_key
+        api_base = request.api_base or settings.llm_api_base
+        model = request.model or settings.llm_model
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key is required")
+
+    try:
+        llm = ChatOpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            model=model,
+            temperature=0,
+            max_tokens=20,
+            timeout=15,
+        )
+        response = await llm.ainvoke("简洁的回答我你是什么模型？")
+        reply = response.content[:100] if response.content else ""
+        return {"status": "ok", "reply": reply, "model": model}
+    except Exception as e:
+        import json
+        error_msg = str(e)
+        # Try to parse JSON error from LLM provider
+        try:
+            # Common pattern: "Error code: 404 - {'error': ...}"
+            if " - {" in error_msg:
+                json_part = error_msg.split(" - {", 1)[1]
+                # Re-add the brace if split consumed it (it didn't, but let's be safe)
+                if not json_part.startswith("{"):
+                    json_part = "{" + json_part
+                
+                # Cleaning up potential trailing chars if any
+                # But simple parsing:
+                err_obj = json.loads(json_part.replace("'", '"')) # Simple heuristic
+                if "error" in err_obj and "message" in err_obj["error"]:
+                    error_msg = f"Provider Error: {err_obj['error']['message']}"
+        except:
+            pass
+            
+        # Truncate long error messages
+        if len(error_msg) > 200:
+            error_msg = error_msg[:200] + "..."
+            
+        # Return 200 with error status so frontend receives the JSON
+        # This is better than raising 502 which might be masked as "Unknown error"
+        return {"status": "error", "message": error_msg, "model": model}
 
 
 # ============================================
@@ -1346,6 +1461,159 @@ async def list_server_mcp_tools(name: str):
 
     tools = mcp_manager.get_server_tools(name)
     return {"server": name, "tools": tools}
+
+
+# ============================================
+# API Routes: Model Pool
+# ============================================
+class ModelPoolAddRequest(BaseModel):
+    name: str
+    api_key: str
+    api_base: str
+    model: str
+
+
+class ModelPoolUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    api_key: Optional[str] = None
+    api_base: Optional[str] = None
+    model: Optional[str] = None
+
+
+class AssignmentsUpdateRequest(BaseModel):
+    llm: Optional[str] = None
+    embedding: Optional[str] = None
+    translate: Optional[str] = None
+
+
+@app.get("/api/model-pool")
+async def get_model_pool():
+    """Get all models and current scenario assignments."""
+    from model_pool import list_models, get_assignments
+    return {
+        "models": list_models(),
+        "assignments": get_assignments(),
+    }
+
+
+@app.post("/api/model-pool")
+async def add_pool_model(request: ModelPoolAddRequest):
+    """Add a new model to the pool."""
+    from model_pool import add_model
+    try:
+        model = add_model(
+            name=request.name,
+            api_key=request.api_key,
+            api_base=request.api_base,
+            model=request.model,
+        )
+        return {"status": "ok", "model": {**model, "api_key": "***"}}
+    except Exception as e:
+        logger.error(f"Failed to add model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/model-pool/assignments")
+async def update_model_assignments(request: AssignmentsUpdateRequest):
+    """Update scenario-to-model assignments."""
+    from model_pool import update_assignments, invalidate_cache
+    try:
+        assignments = {}
+        if request.llm is not None:
+            assignments["llm"] = request.llm
+        if request.embedding is not None:
+            assignments["embedding"] = request.embedding
+        if request.translate is not None:
+            assignments["translate"] = request.translate
+
+        update_assignments(assignments)
+
+        # Clear prompt cache so new model takes effect
+        try:
+            from cache import prompt_cache
+            prompt_cache.clear()
+        except Exception:
+            pass
+
+        logger.info(f"Model assignments updated: {assignments}")
+        return {"status": "ok", "assignments": assignments}
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update assignments: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/model-pool/{model_id}/test")
+async def test_pool_model(model_id: str):
+    """Test a model from the pool by sending a short prompt."""
+    from langchain_openai import ChatOpenAI
+    from model_pool import get_model
+
+    model_config = get_model(model_id)
+    if not model_config:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+
+    api_key = model_config.get("api_key", "")
+    api_base = model_config.get("api_base", "")
+    model_name = model_config.get("model", "")
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Model has no API key configured")
+
+    try:
+        llm = ChatOpenAI(
+            api_key=api_key,
+            base_url=api_base,
+            model=model_name,
+            temperature=0,
+            max_tokens=20,
+            timeout=15,
+        )
+        response = await llm.ainvoke("简洁的回答我你是什么模型？")
+        reply = response.content[:100] if response.content else "连接成功（模型无文本回复）"
+        return {"status": "ok", "reply": reply, "model": model_name}
+    except Exception as e:
+        error_msg = str(e)
+        if len(error_msg) > 200:
+            error_msg = error_msg[:200] + "..."
+        return {"status": "error", "message": error_msg, "model": model_name}
+
+
+@app.put("/api/model-pool/{model_id}")
+async def update_pool_model(model_id: str, request: ModelPoolUpdateRequest):
+    """Update an existing model configuration."""
+    from model_pool import update_model
+    try:
+        updated = update_model(
+            model_id,
+            name=request.name,
+            api_key=request.api_key,
+            api_base=request.api_base,
+            model=request.model,
+        )
+        return {"status": "ok", "model": {**updated, "api_key": "***"}}
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/model-pool/{model_id}")
+async def delete_pool_model(model_id: str):
+    """Delete a model from the pool."""
+    from model_pool import delete_model
+    try:
+        delete_model(model_id)
+        return {"status": "ok", "deleted": model_id}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to delete model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================

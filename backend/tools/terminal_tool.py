@@ -12,6 +12,61 @@ from security.classifier import classify_terminal_command, RiskLevel
 logger = logging.getLogger(__name__)
 
 
+def _intercept_plan_command(command: str) -> Optional[str]:
+    """Intercept plan_create/plan_update when LLM mistakenly runs them as shell commands."""
+    cmd = command.strip()
+    if not (cmd.startswith("plan_create") or cmd.startswith("plan_update")):
+        return None
+
+    import shlex
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        parts = cmd.split()
+
+    tool_name = parts[0]
+
+    if tool_name == "plan_create":
+        title = ""
+        steps = []
+        i = 1
+        while i < len(parts):
+            if parts[i] == "--title" and i + 1 < len(parts):
+                title = parts[i + 1]
+                i += 2
+            elif parts[i] == "--steps":
+                i += 1
+                while i < len(parts) and not parts[i].startswith("--"):
+                    steps.append(parts[i])
+                    i += 1
+            else:
+                # Bare args after --steps flag consumed: treat remaining as steps
+                steps.append(parts[i])
+                i += 1
+        if title and steps:
+            from tools.plan_tool import plan_create as _pc
+            return _pc.invoke({"title": title, "steps": steps})
+
+    elif tool_name == "plan_update":
+        plan_id = status = ""
+        step_id = 0
+        i = 1
+        while i < len(parts):
+            if parts[i] == "--plan_id" and i + 1 < len(parts):
+                plan_id = parts[i + 1]; i += 2
+            elif parts[i] == "--step_id" and i + 1 < len(parts):
+                step_id = int(parts[i + 1]); i += 2
+            elif parts[i] == "--status" and i + 1 < len(parts):
+                status = parts[i + 1]; i += 2
+            else:
+                i += 1
+        if plan_id and step_id and status:
+            from tools.plan_tool import plan_update as _pu
+            return _pu.invoke({"plan_id": plan_id, "step_id": step_id, "status": status})
+
+    return None
+
+
 @tool
 def terminal(command: str, timeout: Optional[int] = 30) -> str:
     """Execute a shell command in a sandboxed environment.
@@ -24,6 +79,14 @@ def terminal(command: str, timeout: Optional[int] = 30) -> str:
     Returns:
         Command output (stdout + stderr).
     """
+    # Intercept plan_create/plan_update if LLM runs them as shell commands
+    logger.info(f"terminal called with command: {command[:80]}")
+    plan_result = _intercept_plan_command(command)
+    if plan_result is not None:
+        logger.info(f"Plan command intercepted: {plan_result}")
+        return plan_result
+    logger.info("Not a plan command, proceeding with normal execution")
+
     # Check if security is enabled
     try:
         from config import settings

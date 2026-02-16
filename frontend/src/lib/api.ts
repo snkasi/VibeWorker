@@ -13,6 +13,7 @@ export interface ChatMessage {
   content: string;
   timestamp?: string;
   tool_calls?: ToolCall[];
+  plan?: Plan;
 }
 
 export interface ToolCall {
@@ -44,8 +45,21 @@ export interface FileNode {
   children?: FileNode[];
 }
 
+// Plan types
+export interface PlanStep {
+  id: number;
+  title: string;
+  status: "pending" | "running" | "completed" | "failed";
+}
+
+export interface Plan {
+  plan_id: string;
+  title: string;
+  steps: PlanStep[];
+}
+
 export interface SSEEvent {
-  type: "token" | "tool_start" | "tool_end" | "done" | "error" | "approval_request";
+  type: "token" | "tool_start" | "tool_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated";
   content?: string;
   tool?: string;
   input?: string;
@@ -54,6 +68,11 @@ export interface SSEEvent {
   // Approval request fields
   request_id?: string;
   risk_level?: "safe" | "warn" | "dangerous" | "blocked";
+  // Plan fields
+  plan?: Plan;        // plan_created event
+  plan_id?: string;   // plan_updated event
+  step_id?: number;   // plan_updated event
+  status?: string;    // plan_updated event (step status)
 }
 
 // ============================================
@@ -253,6 +272,8 @@ export interface SettingsData {
   enable_prompt_cache: boolean;
   enable_translate_cache: boolean;
   mcp_enabled: boolean;
+  // Plan configuration
+  plan_enabled: boolean;
   // Security configuration
   security_enabled: boolean;
   security_level: string;
@@ -285,6 +306,31 @@ export async function updateSettings(data: SettingsData): Promise<void> {
     const err = await res.json();
     throw new Error(err.detail || "Failed to save settings");
   }
+}
+
+export interface TestModelResult {
+  status: "ok" | "error";
+  reply?: string;
+  model?: string;
+  message?: string;
+}
+
+export async function testModelConnection(params: {
+  api_key?: string;
+  api_base?: string;
+  model?: string;
+  model_type?: "llm" | "embedding" | "translate";
+}): Promise<TestModelResult> {
+  const res = await fetch(`${API_BASE}/api/settings/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Model connection test failed");
+  }
+  return await res.json();
 }
 
 // ============================================
@@ -728,6 +774,97 @@ export async function fetchMcpServerTools(name: string): Promise<McpTool[]> {
   if (!res.ok) throw new Error("Failed to fetch server tools");
   const data = await res.json();
   return data.tools || [];
+}
+
+// ============================================
+// Model Pool API
+// ============================================
+export interface PoolModel {
+  id: string;
+  name: string;
+  api_key: string;     // masked
+  api_base: string;
+  model: string;
+}
+
+export interface ModelPoolData {
+  models: PoolModel[];
+  assignments: { llm?: string; embedding?: string; translate?: string };
+}
+
+export async function fetchModelPool(): Promise<ModelPoolData> {
+  const res = await fetch(`${API_BASE}/api/model-pool`);
+  if (!res.ok) throw new Error("Failed to fetch model pool");
+  return await res.json();
+}
+
+export async function addPoolModel(data: {
+  name: string;
+  api_key: string;
+  api_base: string;
+  model: string;
+}): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/model-pool`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to add model");
+  }
+}
+
+export async function updatePoolModel(
+  modelId: string,
+  data: { name?: string; api_key?: string; api_base?: string; model?: string }
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/model-pool/${encodeURIComponent(modelId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to update model");
+  }
+}
+
+export async function deletePoolModel(modelId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/model-pool/${encodeURIComponent(modelId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to delete model");
+  }
+}
+
+export async function updateAssignments(
+  assignments: { llm?: string; embedding?: string; translate?: string }
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/model-pool/assignments`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(assignments),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to update assignments");
+  }
+}
+
+export async function testPoolModel(
+  modelId: string
+): Promise<TestModelResult> {
+  const res = await fetch(`${API_BASE}/api/model-pool/${encodeURIComponent(modelId)}/test`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Model test failed");
+  }
+  return await res.json();
 }
 
 // ============================================

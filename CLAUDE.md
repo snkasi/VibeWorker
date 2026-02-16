@@ -144,11 +144,30 @@ mcp_module/
 
 存储：`backend/sessions/{session_name}.json`（JSON 数组，含 user/assistant/tool 消息）
 
-### 8. 配置管理（`backend/config.py`，Pydantic Settings）
+### 8. 模型池（`backend/model_pool.py`）
 
-关键配置：`llm_api_key/base/model/temperature/max_tokens`、`embedding_*`、`memory_*`、`mcp_enabled`、`mcp_tool_cache_ttl`
+集中式模型配置管理，存储在 `~/.vibeworker/model_pool.json`。
 
-环境变量优先级：`.env` > `OPENAI_API_KEY`（兼容）
+```json
+{
+  "models": [
+    { "id": "a1b2c3", "name": "GPT-4o", "api_key": "sk-...", "api_base": "https://api.openai.com/v1", "model": "gpt-4o" }
+  ],
+  "assignments": { "llm": "a1b2c3", "embedding": "a1b2c3", "translate": "a1b2c3" }
+}
+```
+
+- **模型池 CRUD**：`list_models()` / `add_model()` / `update_model()` / `delete_model()`
+- **场景分配**：`llm` / `embedding` / `translate` 三个场景各自引用池中模型 ID
+- **`resolve_model(scenario)`**：核心函数，所有模型消费者调用。优先用池配置，无分配时回退 `.env`
+- **自动迁移**：首次访问时自动从 `.env` 迁移已有配置到池中，相同 key+base 合并
+- **API key 脱敏**：列表返回时前4后4中间 `***`，更新时脱敏值不覆盖原值
+
+### 9. 配置管理（`backend/config.py`，Pydantic Settings）
+
+关键配置：`llm_temperature/max_tokens`、`memory_*`、`mcp_enabled`、`mcp_tool_cache_ttl`
+
+`.env` 仅存放全局参数（Temperature、Max Tokens）和非模型配置，模型 API Key/Base/Model 由模型池管理
 
 ---
 
@@ -201,6 +220,14 @@ GET  /api/cache/stats                    # 统计
 POST /api/cache/clear?type=url           # 清空 (url/llm/prompt/translate/all)
 POST /api/cache/cleanup                  # 清理过期
 
+# 模型池
+GET    /api/model-pool                   # 获取模型列表 + 分配
+POST   /api/model-pool                   # 添加模型
+PUT    /api/model-pool/assignments       # 更新场景分配
+POST   /api/model-pool/{id}/test         # 测试模型连接
+PUT    /api/model-pool/{id}              # 更新模型
+DELETE /api/model-pool/{id}              # 删除模型
+
 # 设置
 GET /api/settings                        # 获取（含记忆/缓存/MCP 配置）
 PUT /api/settings                        # 更新（写入 .env）
@@ -245,7 +272,7 @@ frontend/src/
 
 - 色调：浅色 Apple 风格，毛玻璃效果，支持暗黑模式
 - 工具调用：Core Tools 中文+Emoji，MCP 工具 🔌 MCP: {name}
-- 设置弹窗四 Tab：通用（主题）、模型（LLM/Embedding/翻译）、记忆、缓存（各类开关）
+- 设置弹窗六 Tab：通用（主题）、模型（模型池+场景分配+全局参数）、记忆、任务、缓存、安全
 
 ---
 
@@ -253,8 +280,8 @@ frontend/src/
 
 ```
 backend/
-├── app.py, config.py, prompt_builder.py, sessions_manager.py, memory_manager.py
-├── .env, requirements.txt, mcp_servers.json
+├── app.py, config.py, model_pool.py, prompt_builder.py, sessions_manager.py, memory_manager.py
+├── requirements.txt, mcp_servers.json
 ├── memory/ (logs/, MEMORY.md)
 ├── sessions/               # JSON 会话
 ├── skills/                 # SKILL.md 文件夹

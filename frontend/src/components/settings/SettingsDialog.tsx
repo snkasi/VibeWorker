@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon, Shield, FolderOpen } from "lucide-react";
+import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon, Shield, FolderOpen, Zap, Plus, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -13,7 +13,12 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fetchSettings, updateSettings, type SettingsData } from "@/lib/api";
+import {
+    fetchSettings, updateSettings, type SettingsData,
+    fetchModelPool, addPoolModel, updatePoolModel, deletePoolModel,
+    updateAssignments, testPoolModel,
+    type PoolModel, type ModelPoolData, type TestModelResult,
+} from "@/lib/api";
 
 function SettingsField({
     label,
@@ -108,6 +113,329 @@ export function initTheme() {
     }
 }
 
+// ============================================
+// Helpers
+// ============================================
+function safeHost(url: string): string {
+    try {
+        return new URL(url).host;
+    } catch {
+        return url;
+    }
+}
+
+// ============================================
+// Model Add/Edit Dialog
+// ============================================
+function ModelFormDialog({
+    open,
+    onOpenChange,
+    editingModel,
+    onSaved,
+}: {
+    open: boolean;
+    onOpenChange: (v: boolean) => void;
+    editingModel: PoolModel | null;
+    onSaved: () => void;
+}) {
+    const [formData, setFormData] = useState({ name: "", api_key: "", api_base: "", model: "" });
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        if (open) {
+            if (editingModel) {
+                setFormData({
+                    name: editingModel.name,
+                    api_key: editingModel.api_key,
+                    api_base: editingModel.api_base,
+                    model: editingModel.model,
+                });
+            } else {
+                setFormData({ name: "", api_key: "", api_base: "", model: "" });
+            }
+        }
+    }, [open, editingModel]);
+
+    const handleSubmit = async () => {
+        if (!formData.name || !formData.api_key) return;
+        setSaving(true);
+        try {
+            if (editingModel) {
+                await updatePoolModel(editingModel.id, formData);
+            } else {
+                await addPoolModel(formData);
+            }
+            onOpenChange(false);
+            onSaved();
+        } catch {
+            // ignore
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="sm:max-w-[400px]">
+                <DialogHeader>
+                    <DialogTitle className="text-sm">
+                        {editingModel ? "编辑模型" : "添加模型"}
+                    </DialogTitle>
+                    <DialogDescription className="text-xs">
+                        {editingModel ? "修改模型配置信息" : "添加一个新的模型配置到模型池"}
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 py-2">
+                    <SettingsField
+                        label="名称"
+                        value={formData.name}
+                        onChange={(v) => setFormData(prev => ({ ...prev, name: v }))}
+                        placeholder="例如: GPT-4o"
+                    />
+                    <SettingsField
+                        label="API Key"
+                        value={formData.api_key}
+                        onChange={(v) => setFormData(prev => ({ ...prev, api_key: v }))}
+                        placeholder="sk-..."
+                        secret
+                    />
+                    <SettingsField
+                        label="API Base URL"
+                        value={formData.api_base}
+                        onChange={(v) => setFormData(prev => ({ ...prev, api_base: v }))}
+                        placeholder="https://api.openai.com/v1"
+                    />
+                    <SettingsField
+                        label="模型名称"
+                        value={formData.model}
+                        onChange={(v) => setFormData(prev => ({ ...prev, model: v }))}
+                        placeholder="gpt-4o"
+                    />
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+                        取消
+                    </Button>
+                    <Button
+                        size="sm"
+                        onClick={handleSubmit}
+                        disabled={saving || !formData.name || !formData.api_key}
+                        className="gap-1.5"
+                    >
+                        {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        {editingModel ? "保存修改" : "添加"}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+// ============================================
+// Model Pool Tab Component
+// ============================================
+function ModelPoolTab() {
+    const [pool, setPool] = useState<ModelPoolData>({ models: [], assignments: {} });
+    const [loading, setLoading] = useState(true);
+    const [testingId, setTestingId] = useState<string | null>(null);
+    const [testResult, setTestResult] = useState<{ id: string; result: TestModelResult } | null>(null);
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [editingModel, setEditingModel] = useState<PoolModel | null>(null);
+    const [savingAssignment, setSavingAssignment] = useState(false);
+
+    const loadPool = useCallback(async () => {
+        try {
+            const data = await fetchModelPool();
+            setPool(data);
+        } catch {
+            // ignore
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { loadPool(); }, [loadPool]);
+
+    const handleTest = async (modelId: string) => {
+        setTestingId(modelId);
+        setTestResult(null);
+        try {
+            const result = await testPoolModel(modelId);
+            setTestResult({ id: modelId, result });
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Unknown error";
+            setTestResult({ id: modelId, result: { status: "error", message: msg } });
+        } finally {
+            setTestingId(null);
+        }
+    };
+
+    const handleDelete = async (modelId: string) => {
+        try {
+            await deletePoolModel(modelId);
+            await loadPool();
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Failed to delete";
+            alert(msg);
+        }
+    };
+
+    const handleAssignmentChange = async (scenario: string, modelId: string) => {
+        setSavingAssignment(true);
+        try {
+            await updateAssignments({ [scenario]: modelId });
+            setPool(prev => ({
+                ...prev,
+                assignments: { ...prev.assignments, [scenario]: modelId },
+            }));
+        } catch {
+            // ignore
+        } finally {
+            setSavingAssignment(false);
+        }
+    };
+
+    const openAdd = () => {
+        setEditingModel(null);
+        setDialogOpen(true);
+    };
+
+    const openEdit = (m: PoolModel) => {
+        setEditingModel(m);
+        setDialogOpen(true);
+    };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center py-6">
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-4">
+            {/* Model Form Dialog */}
+            <ModelFormDialog
+                open={dialogOpen}
+                onOpenChange={setDialogOpen}
+                editingModel={editingModel}
+                onSaved={loadPool}
+            />
+
+            {/* Model Pool List */}
+            <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-muted-foreground">模型池</label>
+                    <button
+                        type="button"
+                        onClick={openAdd}
+                        className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+                    >
+                        <Plus className="w-3.5 h-3.5" />
+                        添加
+                    </button>
+                </div>
+
+                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                    {pool.models.map((m) => (
+                        <div
+                            key={m.id}
+                            className="flex items-center justify-between p-2 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors"
+                        >
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-xs font-medium truncate">{m.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-[10px] text-muted-foreground/60 font-mono truncate">
+                                        {m.model || "未设置"}
+                                    </span>
+                                    <span className="text-[10px] text-muted-foreground/40 truncate">
+                                        {m.api_base ? safeHost(m.api_base) : ""}
+                                    </span>
+                                </div>
+                                {/* Test result inline */}
+                                {testResult && testResult.id === m.id && (
+                                    <div className={`mt-1 text-[10px] ${testResult.result.status === "ok"
+                                        ? "text-green-600 dark:text-green-400"
+                                        : "text-red-600 dark:text-red-400"
+                                        }`}>
+                                        {testResult.result.status === "ok" ? (testResult.result.reply || `${testResult.result.model} 连接成功`) : testResult.result.message}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0 ml-2">
+                                <button
+                                    type="button"
+                                    onClick={() => handleTest(m.id)}
+                                    disabled={testingId === m.id}
+                                    className="p-1 rounded text-muted-foreground/50 hover:text-primary transition-colors"
+                                    title="测试连接"
+                                >
+                                    {testingId === m.id ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                        <Zap className="w-3.5 h-3.5" />
+                                    )}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => openEdit(m)}
+                                    className="p-1 rounded text-muted-foreground/50 hover:text-primary transition-colors"
+                                    title="编辑"
+                                >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleDelete(m.id)}
+                                    className="p-1 rounded text-muted-foreground/50 hover:text-red-500 transition-colors"
+                                    title="删除"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                    {pool.models.length === 0 && (
+                        <p className="text-xs text-muted-foreground/50 text-center py-3">
+                            暂无模型配置，点击「添加」开始
+                        </p>
+                    )}
+                </div>
+            </div>
+
+            {/* Scenario Assignments */}
+            <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground">场景分配</label>
+                {[
+                    { key: "llm", label: "主模型" },
+                    { key: "embedding", label: "Embedding" },
+                    { key: "translate", label: "翻译" },
+                ].map(({ key, label }) => (
+                    <div key={key} className="flex items-center gap-3">
+                        <span className="text-xs text-muted-foreground w-16 shrink-0">{label}</span>
+                        <select
+                            value={pool.assignments[key as keyof typeof pool.assignments] || ""}
+                            onChange={(e) => handleAssignmentChange(key, e.target.value)}
+                            disabled={savingAssignment}
+                            className="flex-1 h-7 px-2 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                        >
+                            <option value="">-- 未分配 (使用 .env 回退) --</option>
+                            {pool.models.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                    {m.name} ({m.model})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 export default function SettingsDialog() {
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -133,6 +461,7 @@ export default function SettingsDialog() {
         enable_prompt_cache: true,
         enable_translate_cache: true,
         mcp_enabled: true,
+        plan_enabled: true,
         security_enabled: true,
         security_level: "standard",
         security_approval_timeout: 60,
@@ -204,7 +533,7 @@ export default function SettingsDialog() {
                         设置
                     </DialogTitle>
                     <DialogDescription>
-                        通用配置、模型参数和记忆系统。保存后部分配置需重启后端生效。
+                        通用配置、模型参数和记忆系统。保存后立即生效。
                     </DialogDescription>
                 </DialogHeader>
 
@@ -214,7 +543,7 @@ export default function SettingsDialog() {
                     </div>
                 ) : (
                     <Tabs defaultValue="general" className="w-full">
-                        <TabsList className="grid w-full grid-cols-5 mb-4">
+                        <TabsList className="grid w-full grid-cols-6 mb-4">
                             <TabsTrigger value="general" className="text-xs">
                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-500 mr-1.5" />
                                 通用
@@ -226,6 +555,10 @@ export default function SettingsDialog() {
                             <TabsTrigger value="memory" className="text-xs">
                                 <span className="w-1.5 h-1.5 rounded-full bg-purple-500 mr-1.5" />
                                 记忆
+                            </TabsTrigger>
+                            <TabsTrigger value="task" className="text-xs">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5" />
+                                任务
                             </TabsTrigger>
                             <TabsTrigger value="cache" className="text-xs">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5" />
@@ -284,113 +617,27 @@ export default function SettingsDialog() {
                             </div>
                         </TabsContent>
 
-                        {/* Model Tab */}
+                        {/* Model Tab — Model Pool */}
                         <TabsContent value="model" className="mt-0">
-                            <Tabs defaultValue="llm" className="w-full">
-                                <TabsList className="grid w-full grid-cols-3 mb-3 h-8">
-                                    <TabsTrigger value="llm" className="text-[11px] h-6">
-                                        <span className="w-1 h-1 rounded-full bg-blue-500 mr-1" />
-                                        主模型
-                                    </TabsTrigger>
-                                    <TabsTrigger value="embedding" className="text-[11px] h-6">
-                                        <span className="w-1 h-1 rounded-full bg-emerald-500 mr-1" />
-                                        Embedding
-                                    </TabsTrigger>
-                                    <TabsTrigger value="translate" className="text-[11px] h-6">
-                                        <span className="w-1 h-1 rounded-full bg-orange-500 mr-1" />
-                                        翻译
-                                    </TabsTrigger>
-                                </TabsList>
-
-                                {/* LLM Sub-tab */}
-                                <TabsContent value="llm" className="space-y-3 mt-0">
+                            <ModelPoolTab />
+                            {/* Global Parameters */}
+                            <div className="space-y-2 mt-4 pt-3 border-t border-border">
+                                <label className="text-xs font-medium text-muted-foreground">全局参数</label>
+                                <div className="grid grid-cols-2 gap-3">
                                     <SettingsField
-                                        label="API Key"
-                                        value={form.openai_api_key}
-                                        onChange={(v) => updateField("openai_api_key", v)}
-                                        placeholder="sk-..."
-                                        secret
+                                        label="Temperature"
+                                        value={String(form.llm_temperature)}
+                                        onChange={(v) => updateField("llm_temperature", parseFloat(v) || 0)}
+                                        type="number"
                                     />
                                     <SettingsField
-                                        label="API Base URL"
-                                        value={form.openai_api_base}
-                                        onChange={(v) => updateField("openai_api_base", v)}
-                                        placeholder="https://api.openai.com/v1"
+                                        label="Max Tokens"
+                                        value={String(form.llm_max_tokens)}
+                                        onChange={(v) => updateField("llm_max_tokens", parseInt(v) || 4096)}
+                                        type="number"
                                     />
-                                    <SettingsField
-                                        label="模型名称"
-                                        value={form.llm_model}
-                                        onChange={(v) => updateField("llm_model", v)}
-                                        placeholder="gpt-4o"
-                                    />
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <SettingsField
-                                            label="Temperature"
-                                            value={String(form.llm_temperature)}
-                                            onChange={(v) => updateField("llm_temperature", parseFloat(v) || 0)}
-                                            type="number"
-                                        />
-                                        <SettingsField
-                                            label="Max Tokens"
-                                            value={String(form.llm_max_tokens)}
-                                            onChange={(v) => updateField("llm_max_tokens", parseInt(v) || 4096)}
-                                            type="number"
-                                        />
-                                    </div>
-                                </TabsContent>
-
-                                {/* Embedding Sub-tab */}
-                                <TabsContent value="embedding" className="space-y-3 mt-0">
-                                    <p className="text-xs text-muted-foreground mb-3">
-                                        留空则自动复用主模型的 API 配置
-                                    </p>
-                                    <SettingsField
-                                        label="API Key"
-                                        value={form.embedding_api_key}
-                                        onChange={(v) => updateField("embedding_api_key", v)}
-                                        placeholder="留空复用主模型"
-                                        secret
-                                    />
-                                    <SettingsField
-                                        label="API Base URL"
-                                        value={form.embedding_api_base}
-                                        onChange={(v) => updateField("embedding_api_base", v)}
-                                        placeholder="留空复用主模型"
-                                    />
-                                    <SettingsField
-                                        label="模型名称"
-                                        value={form.embedding_model}
-                                        onChange={(v) => updateField("embedding_model", v)}
-                                        placeholder="text-embedding-3-small"
-                                    />
-                                </TabsContent>
-
-                                {/* Translate Sub-tab */}
-                                <TabsContent value="translate" className="space-y-3 mt-0">
-                                    <p className="text-xs text-muted-foreground mb-3">
-                                        留空则自动复用主模型，可配置更轻量的模型用于翻译
-                                    </p>
-                                    <SettingsField
-                                        label="API Key"
-                                        value={form.translate_api_key}
-                                        onChange={(v) => updateField("translate_api_key", v)}
-                                        placeholder="留空复用主模型"
-                                        secret
-                                    />
-                                    <SettingsField
-                                        label="API Base URL"
-                                        value={form.translate_api_base}
-                                        onChange={(v) => updateField("translate_api_base", v)}
-                                        placeholder="留空复用主模型"
-                                    />
-                                    <SettingsField
-                                        label="模型名称"
-                                        value={form.translate_model}
-                                        onChange={(v) => updateField("translate_model", v)}
-                                        placeholder="gpt-4o-mini"
-                                    />
-                                </TabsContent>
-                            </Tabs>
+                                </div>
+                            </div>
                         </TabsContent>
 
                         {/* Memory Tab */}
@@ -423,6 +670,27 @@ export default function SettingsDialog() {
                                 type="number"
                                 placeholder="4000"
                             />
+                        </TabsContent>
+
+                        {/* Task Tab */}
+                        <TabsContent value="task" className="space-y-3 mt-0">
+                            <p className="text-xs text-muted-foreground mb-3">
+                                配置 Agent 任务执行行为，如规划能力等
+                            </p>
+                            <ToggleField
+                                label="规划能力 (Plan)"
+                                checked={form.plan_enabled}
+                                onChange={(v) => updateField("plan_enabled", v)}
+                                hint="(复杂任务时 Agent 先制定计划再执行)"
+                            />
+                            <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1.5">
+                                <div className="text-xs font-medium text-muted-foreground">触发条件</div>
+                                <ul className="text-[11px] text-muted-foreground/70 space-y-1 list-disc list-inside">
+                                    <li>任务需要 3 个以上步骤</li>
+                                    <li>涉及多个不同工具的协作</li>
+                                    <li>用户明确要求「先制定计划」</li>
+                                </ul>
+                            </div>
                         </TabsContent>
 
                         {/* Cache Tab */}
@@ -496,16 +764,14 @@ export default function SettingsDialog() {
                                                 key={level.value}
                                                 type="button"
                                                 onClick={() => updateField("security_level", level.value)}
-                                                className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border text-xs font-medium transition-all ${
-                                                    form.security_level === level.value
-                                                        ? "border-primary bg-primary/10 text-primary"
-                                                        : "border-border bg-background text-muted-foreground hover:border-primary/30"
-                                                }`}
+                                                className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border text-xs font-medium transition-all ${form.security_level === level.value
+                                                    ? "border-primary bg-primary/10 text-primary"
+                                                    : "border-border bg-background text-muted-foreground hover:border-primary/30"
+                                                    }`}
                                             >
-                                                <Shield className={`w-3.5 h-3.5 ${
-                                                    level.value === "relaxed" ? "text-green-500" :
+                                                <Shield className={`w-3.5 h-3.5 ${level.value === "relaxed" ? "text-green-500" :
                                                     level.value === "standard" ? "text-amber-500" : "text-red-500"
-                                                }`} />
+                                                    }`} />
                                                 <span>{level.label}</span>
                                                 <span className="text-[10px] text-muted-foreground/60">{level.desc}</span>
                                             </button>
@@ -570,11 +836,10 @@ export default function SettingsDialog() {
                                                         key={net.value}
                                                         type="button"
                                                         onClick={() => updateField("security_docker_network", net.value)}
-                                                        className={`flex flex-col items-center gap-0.5 py-1.5 rounded-lg border text-xs transition-all ${
-                                                            form.security_docker_network === net.value
-                                                                ? "border-primary bg-primary/10 text-primary"
-                                                                : "border-border bg-background text-muted-foreground hover:border-primary/30"
-                                                        }`}
+                                                        className={`flex flex-col items-center gap-0.5 py-1.5 rounded-lg border text-xs transition-all ${form.security_docker_network === net.value
+                                                            ? "border-primary bg-primary/10 text-primary"
+                                                            : "border-border bg-background text-muted-foreground hover:border-primary/30"
+                                                            }`}
                                                     >
                                                         <span className="font-medium">{net.label}</span>
                                                         <span className="text-[10px] text-muted-foreground/60">{net.desc}</span>

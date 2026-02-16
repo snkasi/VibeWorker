@@ -27,11 +27,13 @@ def _build_or_load_index():
         )
         from llama_index.embeddings.openai import OpenAIEmbedding
 
-        # Configure embedding model
+        # Configure embedding model via model pool
+        from model_pool import resolve_model
+        emb_cfg = resolve_model("embedding")
         embed_model = OpenAIEmbedding(
-            model=settings.embedding_model,
-            api_key=settings.embedding_api_key or settings.llm_api_key,
-            api_base=settings.embedding_api_base or settings.llm_api_base,
+            model=emb_cfg["model"],
+            api_key=emb_cfg["api_key"],
+            api_base=emb_cfg["api_base"],
         )
         LlamaSettings.embed_model = embed_model
 

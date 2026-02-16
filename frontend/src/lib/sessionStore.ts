@@ -1,5 +1,5 @@
 import { useSyncExternalStore, useEffect, useCallback } from "react";
-import { streamChat, fetchSessionMessages, sendApproval, type ChatMessage, type ToolCall } from "./api";
+import { streamChat, fetchSessionMessages, sendApproval, type ChatMessage, type ToolCall, type Plan, type PlanStep } from "./api";
 
 // ============================================
 // Types
@@ -26,6 +26,7 @@ export interface SessionState {
   streamingContent: string;
   thinkingSteps: ThinkingStep[];
   approvalRequest: ApprovalRequestData | null;
+  currentPlan: Plan | null;
   messagesLoaded: boolean;
   messagesLoading: boolean;
 }
@@ -39,6 +40,7 @@ function defaultState(): SessionState {
     streamingContent: "",
     thinkingSteps: [],
     approvalRequest: null,
+    currentPlan: null,
     messagesLoaded: false,
     messagesLoading: false,
   };
@@ -210,6 +212,57 @@ class SessionStore {
                 break;
               }
             }
+
+            // Auto-advance plan steps when non-plan tools complete
+            const toolName = event.tool || "";
+            if (toolName !== "plan_create" && toolName !== "plan_update") {
+              const plan = this.getState(sessionId).currentPlan;
+              if (plan) {
+                const runningStep = plan.steps.find((s) => s.status === "running");
+                if (runningStep) {
+                  // Mark running step as completed, and next pending step as running
+                  const nextStep = plan.steps.find((s) => s.id > runningStep.id && s.status === "pending");
+                  const updatedPlan: Plan = {
+                    ...plan,
+                    steps: plan.steps.map((s) => {
+                      if (s.id === runningStep.id) return { ...s, status: "completed" as const };
+                      if (nextStep && s.id === nextStep.id) return { ...s, status: "running" as const };
+                      return s;
+                    }),
+                  };
+                  this.updateSession(sessionId, { currentPlan: updatedPlan });
+                }
+              }
+            }
+            break;
+          }
+
+          case "plan_created":
+            if (event.plan) {
+              // Auto-mark first step as running
+              const newPlan: Plan = {
+                ...event.plan,
+                steps: event.plan.steps.map((s, idx) =>
+                  idx === 0 ? { ...s, status: "running" as const } : s
+                ),
+              };
+              this.updateSession(sessionId, { currentPlan: newPlan });
+            }
+            break;
+
+          case "plan_updated": {
+            const plan = this.getState(sessionId).currentPlan;
+            if (plan && plan.plan_id === event.plan_id) {
+              const updatedPlan: Plan = {
+                ...plan,
+                steps: plan.steps.map((s) =>
+                  s.id === event.step_id
+                    ? { ...s, status: (event.status as PlanStep["status"]) || s.status }
+                    : s
+                ),
+              };
+              this.updateSession(sessionId, { currentPlan: updatedPlan });
+            }
             break;
           }
 
@@ -252,20 +305,39 @@ class SessionStore {
       }
     }
 
-    // Finalize
+    // Finalize — auto-complete any remaining plan steps
+    const finalState = this.getState(sessionId);
+    let finalPlan = finalState.currentPlan;
+    if (finalPlan) {
+      const hasIncomplete = finalPlan.steps.some(
+        (s) => s.status === "running" || s.status === "pending"
+      );
+      if (hasIncomplete) {
+        finalPlan = {
+          ...finalPlan,
+          steps: finalPlan.steps.map((s) =>
+            s.status === "running" || s.status === "pending"
+              ? { ...s, status: "completed" as const }
+              : s
+          ),
+        };
+      }
+    }
     const assistantMsg: ChatMessage = {
       role: "assistant",
       content: fullContent,
       timestamp: new Date().toISOString(),
       tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+      plan: finalPlan || undefined,
     };
 
-    const currentMessages = this.getState(sessionId).messages;
+    const currentMessages = finalState.messages;
     this.updateSession(sessionId, {
       messages: [...currentMessages, assistantMsg],
       isStreaming: false,
       streamingContent: "",
       thinkingSteps: [],
+      currentPlan: null,
     });
 
     this.abortControllers.delete(sessionId);

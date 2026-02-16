@@ -428,12 +428,34 @@ MEMORY_INDEX_ENABLED=true       # 记忆语义搜索索引开关
 ### 5. 知识库接口
 + **Endpoint**: `POST /api/knowledge/rebuild` - 强制重建 RAG 知识库索引。
 
-### 6. 设置管理接口
-+ **Endpoint**: `GET /api/settings` - 获取当前模型配置（LLM/Embedding 的 API Key、Base URL、模型名称、Temperature、Max Tokens 等），数据读取自用户数据目录的 `.env` 文件（`~/.vibeworker/.env`）。
-+ **Endpoint**: `PUT /api/settings` - 更新模型配置，写回用户 `.env` 文件（保留注释和原有结构）。修改后需重启后端生效。
-+ **安全写入保护 ✅ 已实现**：写入前校验目标路径不在项目源码目录（`PROJECT_ROOT`）内，防止配置文件被误写到项目目录。如果路径在项目内，拒绝写入并记录错误日志。
+### 6. 模型池接口 ✅ 已实现
 
-### 7. 健康检查
+模型配置统一由模型池管理（`~/.vibeworker/model_pool.json`），替代原有 `.env` 中分散的模型配置。
+
++ **Endpoint**: `GET /api/model-pool` - 获取模型池列表和场景分配。
+    - 返回：`{ "models": [...], "assignments": { "llm": "id", "embedding": "id", "translate": "id" } }`
+    - API Key 自动脱敏（前4后4，中间 `***`）
++ **Endpoint**: `POST /api/model-pool` - 添加模型。
+    - Body: `{ "name": "GPT-4o", "api_key": "sk-...", "api_base": "https://...", "model": "gpt-4o" }`
++ **Endpoint**: `PUT /api/model-pool/{model_id}` - 更新模型配置。
+    - 脱敏格式的 api_key 不会覆盖原值
++ **Endpoint**: `DELETE /api/model-pool/{model_id}` - 删除模型。
+    - 已分配给场景的模型不可删除（409），需先重新分配
++ **Endpoint**: `PUT /api/model-pool/assignments` - 更新场景分配。
+    - Body: `{ "llm": "model_id", "embedding": "model_id", "translate": "model_id" }`
+    - 变更后自动清除 Prompt 缓存
++ **Endpoint**: `POST /api/model-pool/{model_id}/test` - 测试模型连接。
+    - 发送短提示词测试连通性，返回模型回复
+
+**自动迁移**：首次访问时自动从 `.env` 中的 `OPENAI_API_KEY`/`EMBEDDING_*`/`TRANSLATE_*` 迁移到模型池，相同 key+base 合并为一条。
+
+### 7. 设置管理接口
++ **Endpoint**: `GET /api/settings` - 获取当前全局配置（Temperature、Max Tokens、记忆、缓存、安全等），数据读取自 `~/.vibeworker/.env`。
++ **Endpoint**: `PUT /api/settings` - 更新全局配置，写回 `.env` 文件。
++ **说明**：模型 API Key/Base/Model 已由模型池管理，`.env` 仅存放全局参数和非模型配置。
++ **安全写入保护 ✅ 已实现**：写入前校验目标路径不在项目源码目录（`PROJECT_ROOT`）内。
+
+### 8. 健康检查
 + **Endpoint**: `GET /api/health` - 返回后端状态、版本号和当前模型名称。
 
 ### 8. 技能商店接口 ✅ 已实现
@@ -538,11 +560,15 @@ MEMORY_INDEX_ENABLED=true       # 记忆语义搜索索引开关
     - 左侧：**"VibeWorker"** + 版本号
     - 右侧：后端状态指示器（在线/离线）+ ⚙️ 设置按钮（弹窗配置 LLM/Embedding 模型参数）+ Inspector 开关按钮
 + **设置弹窗 (Settings Dialog)**：
-    - 点击导航栏设置按钮打开，分「通用」「主模型」「Embedding」「翻译」「记忆」Tab。
-    - **通用 Tab**：显示数据目录路径（只读，通过环境变量 `DATA_DIR` 修改）、主题切换。
-    - 支持配置 API Key（密码模式，可切换显示）、API Base URL、模型名称、Temperature、Max Tokens。
+    - 点击导航栏设置按钮打开，分「通用」「模型」「记忆」「任务」「缓存」「安全」六个 Tab。
+    - **通用 Tab**：显示数据目录路径（只读）、主题切换（明亮/暗黑）。
+    - **模型 Tab ✅ 已实现**：模型池架构，替代原有分散的模型配置。
+        * **模型池列表**：显示所有已配置模型，支持添加（弹窗表单）、编辑、删除、测试连接。
+        * **场景分配**：通过下拉选择为「主模型」「Embedding」「翻译」三个场景分配模型，即时生效。
+        * **全局参数**：Temperature 和 Max Tokens，跟随「保存配置」按钮写入 `.env`。
+        * 模型配置存储在 `~/.vibeworker/model_pool.json`，与 `.env` 分离。
     - **记忆 Tab ✅ 已实现**：配置自动提取开关、语义搜索索引开关、日志加载天数、记忆 Token 预算。
-    - 保存后自动关闭弹窗，配置写入后端 `.env` 文件。
+    - 保存后自动关闭弹窗，全局配置写入后端 `.env` 文件。
 + **代码块样式**：
     - 工具调用详情中的代码块采用浅色背景（`#f6f8fb`）+ 蓝色左边条 + Prism 语法高亮。
     - 使用 JetBrains Mono 等宽字体，字号 `0.7rem`。
@@ -596,6 +622,7 @@ vibeworker/
 ├── backend/                    # FastAPI + LangChain/LangGraph（只读源码）
 │   ├── app.py                  # 入口文件 (Port 8088)
 │   ├── config.py               # Pydantic Settings（含数据目录安全校验）
+│   ├── model_pool.py           # 模型池管理（CRUD、场景分配、resolve_model）✅
 │   ├── prompt_builder.py       # System Prompt 动态拼接
 │   ├── sessions_manager.py     # 会话管理器
 │   ├── memory_manager.py       # 记忆管理中心（MemoryManager 核心类）✅
@@ -636,7 +663,8 @@ vibeworker/
 │       └── agent.py            # create_agent 配置
 │
 ├── ~/.vibeworker/              # 用户数据目录（所有可写数据，与源码隔离）
-│   ├── .env                    # 用户环境变量（首次从 user_default/.env 复制）
+│   ├── .env                    # 用户环境变量（全局参数，首次从 user_default/.env 复制）
+│   ├── model_pool.json         # 模型池配置（模型列表+场景分配）✅
 │   ├── mcp_servers.json        # MCP 服务器配置
 │   ├── sessions/               # JSON 会话记录
 │   ├── memory/                 # 记忆存储

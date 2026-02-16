@@ -28,11 +28,13 @@ def set_sse_approval_callback(callback: Optional[Callable]) -> None:
 
 
 def create_llm() -> ChatOpenAI:
-    """Create and configure the LLM instance."""
+    """Create and configure the LLM instance using model pool."""
+    from model_pool import resolve_model
+    cfg = resolve_model("llm")
     return ChatOpenAI(
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_api_base,
+        model=cfg["model"],
+        api_key=cfg["api_key"],
+        base_url=cfg["api_base"],
         temperature=settings.llm_temperature,
         max_tokens=settings.llm_max_tokens,
         streaming=True,

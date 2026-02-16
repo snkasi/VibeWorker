@@ -145,6 +145,10 @@ class Settings(BaseSettings):
     security_docker_enabled: bool = Field(default=False)
     security_docker_network: str = Field(default="none")
 
+    # Plan Configuration
+    plan_enabled: bool = Field(default=True)
+    plan_require_approval: bool = Field(default=False)
+
     # Claude Code Skills compatibility
     claude_code_skills_dir: Optional[Path] = None
 
@@ -253,3 +257,19 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def reload_settings() -> None:
+    """Reload settings from .env file into the existing settings singleton.
+
+    Re-reads the .env file, creates a fresh Settings instance, and copies
+    all field values in-place onto the module-level `settings` object so
+    every module that imported it sees the updated values immediately.
+    """
+    global settings
+    env_path = settings.get_env_path()
+    if env_path.exists():
+        load_dotenv(env_path, override=True)
+    new = Settings()
+    for field_name in new.model_fields:
+        setattr(settings, field_name, getattr(new, field_name))
