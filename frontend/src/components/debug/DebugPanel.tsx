@@ -248,7 +248,7 @@ export default function DebugPanel({ sessionId, onClose }: DebugPanelProps) {
       </div>
 
       {/* Call List */}
-      <div ref={scrollRef} className="flex-1 overflow-auto px-3 py-2 space-y-2 mb-16 scroll-smooth">
+      <div ref={scrollRef} className="flex-1 overflow-auto px-3 py-2 space-y-2 mb-16 scroll-smooth pb-4">
         {debugCalls.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40">
             <Bug className="w-8 h-8 mb-2" />
