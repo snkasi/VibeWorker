@@ -191,7 +191,7 @@ async def _run_agent_no_cache(
                         "content": chunk.content,
                     }
 
-            elif kind == "on_chat_model_start" and debug:
+            elif kind == "on_chat_model_start":
                 run_id = event.get("run_id", "")
                 node = metadata.get("langgraph_node", "")
                 input_data = event.get("data", {}).get("input", {})
@@ -201,8 +201,18 @@ async def _run_agent_no_cache(
                     "node": node,
                     "input": input_messages,
                 }
+                # Send LLM start event for real-time debug display
+                from model_pool import resolve_model
+                model_name = resolve_model("llm").get("model", "unknown")
+                yield {
+                    "type": "llm_start",
+                    "call_id": run_id[:12],
+                    "node": node,
+                    "model": model_name,
+                    "input": input_messages[:5000],
+                }
 
-            elif kind == "on_chat_model_end" and debug:
+            elif kind == "on_chat_model_end":
                 run_id = event.get("run_id", "")
                 tracked = debug_tracking.pop(run_id, None)
                 if tracked:
@@ -224,7 +234,7 @@ async def _run_agent_no_cache(
                     model_name = resolve_model("llm").get("model", "unknown")
 
                     yield {
-                        "type": "debug_llm_call",
+                        "type": "llm_end",
                         "call_id": run_id[:12],
                         "node": tracked["node"],
                         "model": model_name,

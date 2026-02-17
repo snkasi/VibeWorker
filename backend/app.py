@@ -361,6 +361,46 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                     sse_data = json.dumps(event, ensure_ascii=False)
                     yield f"data: {sse_data}\n\n"
 
+                elif event_type == "llm_start":
+                    # Forward LLM start event for real-time debug display
+                    sse_data = json.dumps(event, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+                    # Track for persistence
+                    if debug:
+                        from datetime import datetime
+                        debug_calls_log.append({
+                            "call_id": event.get("call_id", ""),
+                            "node": event.get("node", ""),
+                            "model": event.get("model", ""),
+                            "duration_ms": None,
+                            "input_tokens": None,
+                            "output_tokens": None,
+                            "total_tokens": None,
+                            "input": event.get("input", ""),
+                            "output": "",
+                            "timestamp": datetime.now().isoformat(),
+                            "_inProgress": True,
+                        })
+
+                elif event_type == "llm_end":
+                    # Update in-progress LLM call with final data
+                    if debug:
+                        for i in range(len(debug_calls_log) - 1, -1, -1):
+                            call = debug_calls_log[i]
+                            if call.get("call_id") == event.get("call_id") and call.get("_inProgress"):
+                                debug_calls_log[i] = {
+                                    **call,
+                                    "duration_ms": event.get("duration_ms"),
+                                    "input_tokens": event.get("input_tokens"),
+                                    "output_tokens": event.get("output_tokens"),
+                                    "total_tokens": event.get("total_tokens"),
+                                    "output": event.get("output", ""),
+                                    "_inProgress": False,
+                                }
+                                break
+                    sse_data = json.dumps(event, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+
                 elif event_type == "done":
                     # Save assistant response to session
                     if full_response:

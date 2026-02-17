@@ -1,6 +1,12 @@
 import { useSyncExternalStore, useEffect, useCallback } from "react";
 import { streamChat, fetchSessionMessages, sendApproval, type ChatMessage, type ToolCall, type Plan, type PlanStep, type PlanRevision, type DebugLLMCall, type DebugToolCall } from "./api";
 
+// Helper to check if a debug call is an LLM call
+function isLLMCall(call: DebugLLMCall | DebugToolCall): call is DebugLLMCall {
+  // Check for call_id which is unique to DebugLLMCall
+  return "call_id" in call;
+}
+
 // ============================================
 // Types
 // ============================================
@@ -188,6 +194,21 @@ class SessionStore {
               tool: event.tool || "",
               input: event.input || "",
             });
+            // Add to debugCalls immediately when tool starts (for real-time display)
+            if (debugEnabled) {
+              const calls = this.getState(sessionId).debugCalls;
+              this.updateSession(sessionId, {
+                debugCalls: [...calls, {
+                  tool: event.tool || "",
+                  input: event.input || "",
+                  output: "",  // Empty means in-progress
+                  duration_ms: null,
+                  cached: false,
+                  timestamp: new Date().toISOString(),
+                  _inProgress: true,  // Flag for in-progress state
+                } as DebugToolCall & { _inProgress?: boolean }],
+              });
+            }
             // Notify app to show debug panel when atomic actions start
             window.dispatchEvent(new CustomEvent("vibeworker-debug-activity", {
               detail: { sessionId, type: "tool_start" },
@@ -225,19 +246,24 @@ class SessionStore {
               }
             }
 
-            // Record to debugCalls if debug enabled
+            // Update the in-progress debug call with final data
             if (debugEnabled) {
-              const calls = this.getState(sessionId).debugCalls;
-              this.updateSession(sessionId, {
-                debugCalls: [...calls, {
-                  tool: event.tool || "",
-                  input: event.input || "",
-                  output: output,
-                  duration_ms: event.duration_ms ?? null,
-                  cached: isCached,
-                  timestamp: new Date().toISOString(),
-                } as DebugToolCall],
-              });
+              const calls = this.getState(sessionId).debugCalls.slice();
+              // Find the last in-progress call for this tool
+              for (let i = calls.length - 1; i >= 0; i--) {
+                const call = calls[i];
+                if (!isLLMCall(call) && call.tool === event.tool && call._inProgress) {
+                  calls[i] = {
+                    ...call,
+                    output: output,
+                    duration_ms: event.duration_ms ?? null,
+                    cached: isCached,
+                    _inProgress: false,
+                  };
+                  break;
+                }
+              }
+              this.updateSession(sessionId, { debugCalls: calls });
             }
 
             // Auto-advance plan steps when non-plan tools complete
@@ -264,7 +290,60 @@ class SessionStore {
             break;
           }
 
+          case "llm_start": {
+            // Add LLM call to debugCalls immediately when it starts (for real-time display)
+            if (debugEnabled) {
+              const calls = this.getState(sessionId).debugCalls;
+              this.updateSession(sessionId, {
+                debugCalls: [...calls, {
+                  call_id: event.call_id || "",
+                  node: event.node || "",
+                  model: event.model || "",
+                  duration_ms: null,
+                  input_tokens: null,
+                  output_tokens: null,
+                  total_tokens: null,
+                  input: event.input || "",
+                  output: "",  // Empty means in-progress
+                  timestamp: new Date().toISOString(),
+                  _inProgress: true,
+                } as DebugLLMCall],
+              });
+            }
+            // Notify app to show debug panel when LLM calls start
+            window.dispatchEvent(new CustomEvent("vibeworker-debug-activity", {
+              detail: { sessionId, type: "llm_start" },
+            }));
+            break;
+          }
+
+          case "llm_end": {
+            // Update the in-progress LLM call with final data
+            if (debugEnabled) {
+              const calls = this.getState(sessionId).debugCalls.slice();
+              // Find the last in-progress call for this call_id
+              for (let i = calls.length - 1; i >= 0; i--) {
+                const call = calls[i];
+                if (isLLMCall(call) && call.call_id === event.call_id && call._inProgress) {
+                  calls[i] = {
+                    ...call,
+                    duration_ms: event.duration_ms ?? null,
+                    input_tokens: event.input_tokens ?? null,
+                    output_tokens: event.output_tokens ?? null,
+                    total_tokens: event.total_tokens ?? null,
+                    output: event.output || "",
+                    _inProgress: false,
+                  };
+                  break;
+                }
+              }
+              this.updateSession(sessionId, { debugCalls: calls });
+            }
+            break;
+          }
+
           case "debug_llm_call": {
+            // Legacy event format - handle for backward compatibility
             const calls = this.getState(sessionId).debugCalls;
             this.updateSession(sessionId, {
               debugCalls: [...calls, {
@@ -280,10 +359,6 @@ class SessionStore {
                 timestamp: new Date().toISOString(),
               } as DebugLLMCall],
             });
-            // Notify app to show debug panel when LLM calls start
-            window.dispatchEvent(new CustomEvent("vibeworker-debug-activity", {
-              detail: { sessionId, type: "debug_llm_call" },
-            }));
             break;
           }
 

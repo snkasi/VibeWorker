@@ -7,7 +7,8 @@ import { sessionStore, useSessionState } from "@/lib/sessionStore";
 import type { DebugLLMCall, DebugToolCall } from "@/lib/api";
 
 function isLLMCall(call: DebugLLMCall | DebugToolCall): call is DebugLLMCall {
-  return "model" in call;
+  // Check for call_id which is unique to DebugLLMCall
+  return "call_id" in call;
 }
 
 function formatDuration(ms: number | null): string {
@@ -27,9 +28,21 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
   // Always collapsed by default
   const [expanded, setExpanded] = useState(false);
 
+  // Determine card status
+  const isRunning = !!call._inProgress;
+  const hasError = !isRunning && call.output?.startsWith("[ERROR]");
+
+  // Background classes based on status
+  let bgClass = "bg-card/50";  // Default: white/card
+  if (isRunning) {
+    bgClass = "bg-amber-50/80 dark:bg-amber-950/30 animate-pulse";
+  } else if (hasError) {
+    bgClass = "bg-red-50/80 dark:bg-red-950/30";
+  }
+
   if (isLLMCall(call)) {
     return (
-      <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+      <div className={`rounded-lg border border-border overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300 ${bgClass}`}>
         <button
           type="button"
           className="w-full flex items-center gap-2 p-2.5 text-left hover:bg-muted/30 transition-colors"
@@ -88,7 +101,7 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
 
   // Tool call
   return (
-    <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+    <div className={`rounded-lg border border-border overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300 ${bgClass}`}>
       <button
         type="button"
         className="w-full flex items-center gap-2 p-2.5 text-left hover:bg-muted/30 transition-colors"
@@ -175,11 +188,17 @@ export default function DebugPanel({ sessionId, onClose }: DebugPanelProps) {
   const { debugCalls, isStreaming } = useSessionState(sessionId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom during streaming
+  // Auto-scroll to bottom during streaming with smooth behavior
+  const prevLengthRef = useRef(0);
   useEffect(() => {
-    if (isStreaming && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (isStreaming && scrollRef.current && debugCalls.length > prevLengthRef.current) {
+      const scrollContainer = scrollRef.current;
+      scrollContainer.scrollTo({
+        top: scrollContainer.scrollHeight,
+        behavior: "smooth",
+      });
     }
+    prevLengthRef.current = debugCalls.length;
   }, [debugCalls.length, isStreaming]);
 
   return (
@@ -207,7 +226,7 @@ export default function DebugPanel({ sessionId, onClose }: DebugPanelProps) {
       </div>
 
       {/* Call List */}
-      <div ref={scrollRef} className="flex-1 overflow-auto px-3 py-2 space-y-2">
+      <div ref={scrollRef} className="flex-1 overflow-auto px-3 py-2 space-y-2 mb-16 scroll-smooth">
         {debugCalls.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground/40">
             <Bug className="w-8 h-8 mb-2" />
@@ -217,11 +236,18 @@ export default function DebugPanel({ sessionId, onClose }: DebugPanelProps) {
         ) : (
           <>
             {debugCalls.map((call, index) => (
-              <DebugCallItem key={index} call={call} />
+              <DebugCallItem
+                key={index}
+                call={call}
+              />
             ))}
-            <DebugSummary calls={debugCalls} />
           </>
         )}
+      </div>
+
+      {/* Summary - Fixed at bottom */}
+      <div className="shrink-0 border-t border-border px-3 py-2 bg-card/50">
+        <DebugSummary calls={debugCalls} />
       </div>
     </div>
   );

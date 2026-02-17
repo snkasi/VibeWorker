@@ -69,13 +69,14 @@ export interface DebugLLMCall {
   call_id: string;
   node: string;
   model: string;
-  duration_ms: number;
+  duration_ms: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
   input: string;
   output: string;
   timestamp: string;
+  _inProgress?: boolean;  // Internal flag for in-progress state
 }
 
 export interface DebugToolCall {
@@ -85,10 +86,11 @@ export interface DebugToolCall {
   duration_ms: number | null;
   cached: boolean;
   timestamp: string;
+  _inProgress?: boolean;  // Internal flag for in-progress state
 }
 
 export interface SSEEvent {
-  type: "token" | "tool_start" | "tool_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated" | "plan_revised" | "debug_llm_call";
+  type: "token" | "tool_start" | "tool_end" | "llm_start" | "llm_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated" | "plan_revised" | "debug_llm_call";
   content?: string;
   tool?: string;
   input?: string;
