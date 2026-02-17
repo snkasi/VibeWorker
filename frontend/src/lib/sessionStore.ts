@@ -1,5 +1,5 @@
 import { useSyncExternalStore, useEffect, useCallback } from "react";
-import { streamChat, fetchSessionMessages, sendApproval, type ChatMessage, type ToolCall, type Plan, type PlanStep } from "./api";
+import { streamChat, fetchSessionMessages, sendApproval, type ChatMessage, type ToolCall, type Plan, type PlanStep, type PlanRevision, type DebugLLMCall, type DebugToolCall } from "./api";
 
 // ============================================
 // Types
@@ -29,6 +29,7 @@ export interface SessionState {
   currentPlan: Plan | null;
   messagesLoaded: boolean;
   messagesLoading: boolean;
+  debugCalls: (DebugLLMCall | DebugToolCall)[];
 }
 
 type Listener = () => void;
@@ -43,6 +44,7 @@ function defaultState(): SessionState {
     currentPlan: null,
     messagesLoaded: false,
     messagesLoading: false,
+    debugCalls: [],
   };
 }
 
@@ -145,19 +147,23 @@ class SessionStore {
     const prevMessages = state.messages;
     const isFirstMessage = prevMessages.length === 0;
 
+    const debugEnabled = typeof window !== "undefined"
+      && localStorage.getItem("vibeworker_debug") === "true";
+
     this.updateSession(sessionId, {
       messages: [...prevMessages, userMsg],
       isStreaming: true,
       streamingContent: "",
       thinkingSteps: [],
       approvalRequest: null,
+      debugCalls: debugEnabled ? [] : this.getState(sessionId).debugCalls,
     });
 
     let fullContent = "";
     const toolCalls: ToolCall[] = [];
 
     try {
-      for await (const event of streamChat(message, sessionId, controller.signal)) {
+      for await (const event of streamChat(message, sessionId, controller.signal, debugEnabled)) {
         switch (event.type) {
           case "token":
             fullContent += event.content || "";
@@ -213,6 +219,21 @@ class SessionStore {
               }
             }
 
+            // Record to debugCalls if debug enabled
+            if (debugEnabled) {
+              const calls = this.getState(sessionId).debugCalls;
+              this.updateSession(sessionId, {
+                debugCalls: [...calls, {
+                  tool: event.tool || "",
+                  input: event.input || "",
+                  output: output,
+                  duration_ms: event.duration_ms ?? null,
+                  cached: isCached,
+                  timestamp: new Date().toISOString(),
+                } as DebugToolCall],
+              });
+            }
+
             // Auto-advance plan steps when non-plan tools complete
             const toolName = event.tool || "";
             if (toolName !== "plan_create" && toolName !== "plan_update") {
@@ -234,6 +255,25 @@ class SessionStore {
                 }
               }
             }
+            break;
+          }
+
+          case "debug_llm_call": {
+            const calls = this.getState(sessionId).debugCalls;
+            this.updateSession(sessionId, {
+              debugCalls: [...calls, {
+                call_id: event.call_id || "",
+                node: event.node || "",
+                model: event.model || "",
+                duration_ms: event.duration_ms || 0,
+                input_tokens: event.input_tokens ?? null,
+                output_tokens: event.output_tokens ?? null,
+                total_tokens: event.total_tokens ?? null,
+                input: event.input || "",
+                output: event.output || "",
+                timestamp: new Date().toISOString(),
+              } as DebugLLMCall],
+            });
             break;
           }
 
@@ -359,6 +399,10 @@ class SessionStore {
 
   clearApproval(sessionId: string): void {
     this.updateSession(sessionId, { approvalRequest: null });
+  }
+
+  clearDebugCalls(sessionId: string): void {
+    this.updateSession(sessionId, { debugCalls: [] });
   }
 
   addSessionAllowedTool(sessionId: string, tool: string): void {

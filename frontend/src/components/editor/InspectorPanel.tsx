@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
-import { X, Save, FileText, RotateCcw, Languages, Loader2 } from "lucide-react";
+import { X, Save, FileText, RotateCcw, Languages, Loader2, Bug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Tooltip,
@@ -10,6 +10,7 @@ import {
     TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { fetchFile, saveFile, translateContent, fetchSettings } from "@/lib/api";
+import DebugPanel from "@/components/debug/DebugPanel";
 
 // Lazy-load Monaco to avoid SSR issues
 const MonacoEditor = dynamic(
@@ -20,11 +21,17 @@ const MonacoEditor = dynamic(
 interface InspectorPanelProps {
     filePath: string | null;
     onClose: () => void;
+    onClearFile?: () => void;
+    debugMode?: boolean;
+    sessionId?: string;
 }
 
 export default function InspectorPanel({
     filePath,
     onClose,
+    onClearFile,
+    debugMode = false,
+    sessionId,
 }: InspectorPanelProps) {
     const [content, setContent] = useState("");
     const [originalContent, setOriginalContent] = useState("");
@@ -133,6 +140,9 @@ export default function InspectorPanel({
     };
 
     if (!filePath) {
+        if (debugMode && sessionId) {
+            return <DebugPanel sessionId={sessionId} />;
+        }
         return (
             <div className="h-full flex items-center justify-center text-center p-6">
                 <div className="animate-fade-in-up">
@@ -225,6 +235,22 @@ export default function InspectorPanel({
                         <span className="text-[10px] text-destructive font-medium px-1">
                             保存失败
                         </span>
+                    )}
+                    {debugMode && onClearFile && (
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="w-6 h-6 rounded-md text-orange-500 hover:bg-orange-500/10"
+                                    onClick={onClearFile}
+                                    id="editor-debug-button"
+                                >
+                                    <Bug className="w-3 h-3" />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>切换到调试面板</TooltipContent>
+                        </Tooltip>
                     )}
                     <Button
                         variant="ghost"

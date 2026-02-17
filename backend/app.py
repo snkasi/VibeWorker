@@ -142,6 +142,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = "main_session"
     stream: bool = True
+    debug: bool = False
 
 
 class FileWriteRequest(BaseModel):
@@ -179,7 +180,7 @@ async def chat(request: ChatRequest):
 
     if request.stream:
         return StreamingResponse(
-            _stream_agent_response(request.message, history, request.session_id),
+            _stream_agent_response(request.message, history, request.session_id, request.debug),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -221,7 +222,7 @@ async def chat(request: ChatRequest):
         }
 
 
-async def _stream_agent_response(message: str, history: list, session_id: str):
+async def _stream_agent_response(message: str, history: list, session_id: str, debug: bool = False):
     """Generator for SSE streaming."""
     # Restore session context inside the async generator
     set_session_id(session_id)
@@ -250,7 +251,7 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
 
     try:
         # Wrap the agent stream to interleave approval events
-        agent_gen = run_agent(message, history, stream=True)
+        agent_gen = run_agent(message, history, stream=True, debug=debug)
         agent_task = asyncio.ensure_future(_next_event(agent_gen))
 
         while True:
@@ -313,7 +314,12 @@ async def _stream_agent_response(message: str, history: list, session_id: str):
                         "tool": event["tool"],
                         "output": event.get("output", "")[:1000],
                         "cached": is_cached,
+                        "duration_ms": event.get("duration_ms"),
                     }, ensure_ascii=False)
+                    yield f"data: {sse_data}\n\n"
+
+                elif event_type == "debug_llm_call":
+                    sse_data = json.dumps(event, ensure_ascii=False)
                     yield f"data: {sse_data}\n\n"
 
                 elif event_type == "done":

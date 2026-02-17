@@ -58,13 +58,43 @@ export interface Plan {
   steps: PlanStep[];
 }
 
+export interface PlanRevision {
+  reason: string;
+  revised_steps: PlanStep[];
+  keep_completed: number;
+}
+
+// Debug types
+export interface DebugLLMCall {
+  call_id: string;
+  node: string;
+  model: string;
+  duration_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  input: string;
+  output: string;
+  timestamp: string;
+}
+
+export interface DebugToolCall {
+  tool: string;
+  input: string;
+  output: string;
+  duration_ms: number | null;
+  cached: boolean;
+  timestamp: string;
+}
+
 export interface SSEEvent {
-  type: "token" | "tool_start" | "tool_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated";
+  type: "token" | "tool_start" | "tool_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated" | "plan_revised" | "debug_llm_call";
   content?: string;
   tool?: string;
   input?: string;
   output?: string;
   cached?: boolean;  // Cache indicator
+  duration_ms?: number;  // Tool/LLM duration
   // Approval request fields
   request_id?: string;
   risk_level?: "safe" | "warn" | "dangerous" | "blocked";
@@ -73,6 +103,17 @@ export interface SSEEvent {
   plan_id?: string;   // plan_updated event
   step_id?: number;   // plan_updated event
   status?: string;    // plan_updated event (step status)
+  // Plan revision fields
+  reason?: string;            // plan_revised: why the plan was revised
+  revised_steps?: PlanStep[]; // plan_revised: new/updated steps
+  keep_completed?: number;    // plan_revised: number of completed steps kept
+  // Debug LLM call fields
+  call_id?: string;
+  node?: string;
+  model?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
 }
 
 // ============================================
@@ -87,6 +128,7 @@ export async function* streamChat(
   message: string,
   sessionId: string = "main_session",
   signal?: AbortSignal,
+  debug: boolean = false,
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
@@ -95,6 +137,7 @@ export async function* streamChat(
       message,
       session_id: sessionId,
       stream: true,
+      debug,
     }),
     signal,
   });

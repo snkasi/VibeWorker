@@ -1,6 +1,9 @@
 """Agent Graph - LangChain Agent orchestration with LangGraph runtime."""
 import logging
-from typing import Optional, Callable
+import re
+import time
+from typing import Optional, Callable, Annotated, TypedDict
+from uuid import uuid4
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -64,10 +67,24 @@ def create_agent_graph():
     return agent
 
 
+def _serialize_debug_messages(input_data) -> str:
+    """Serialize LLM input messages for debug display."""
+    messages = input_data.get("messages", [])
+    if messages and isinstance(messages[0], list):
+        messages = messages[0]
+    parts = []
+    for msg in messages:
+        role = type(msg).__name__
+        content = str(msg.content) if hasattr(msg, "content") else str(msg)
+        parts.append(f"[{role}]\n{content}")
+    return "\n---\n".join(parts)
+
+
 async def run_agent(
     message: str,
     session_history: list[dict],
     stream: bool = True,
+    debug: bool = False,
 ):
     """
     Run the agent with a user message.
@@ -82,7 +99,7 @@ async def run_agent(
     """
     # If LLM cache is disabled, use original logic
     if not settings.enable_llm_cache:
-        async for event in _run_agent_no_cache(message, session_history, stream):
+        async for event in _run_agent_no_cache(message, session_history, stream, debug):
             yield event
         return
 
@@ -109,7 +126,7 @@ async def run_agent(
     from cache import llm_cache
 
     async def generator():
-        async for event in _run_agent_no_cache(message, session_history, stream):
+        async for event in _run_agent_no_cache(message, session_history, stream, debug):
             yield event
 
     async for event in llm_cache.get_or_generate(
@@ -124,6 +141,7 @@ async def _run_agent_no_cache(
     message: str,
     session_history: list[dict],
     stream: bool = True,
+    debug: bool = False,
 ):
     """
     Run the agent without caching (internal implementation).
@@ -157,6 +175,9 @@ async def _run_agent_no_cache(
     config = {"recursion_limit": settings.agent_recursion_limit}
 
     if stream:
+        is_task_mode = settings.agent_mode == "task"
+        debug_tracking = {}  # run_id → tracking info
+
         async for event in agent.astream_events(input_state, version="v2", config=config):
             kind = event.get("event", "")
 
@@ -169,8 +190,56 @@ async def _run_agent_no_cache(
                         "content": chunk.content,
                     }
 
+            elif kind == "on_chat_model_start" and debug:
+                run_id = event.get("run_id", "")
+                node = metadata.get("langgraph_node", "")
+                input_data = event.get("data", {}).get("input", {})
+                input_messages = _serialize_debug_messages(input_data)
+                debug_tracking[run_id] = {
+                    "start_time": time.time(),
+                    "node": node,
+                    "input": input_messages,
+                }
+
+            elif kind == "on_chat_model_end" and debug:
+                run_id = event.get("run_id", "")
+                tracked = debug_tracking.pop(run_id, None)
+                if tracked:
+                    output_msg = event.get("data", {}).get("output", None)
+                    duration_ms = int((time.time() - tracked["start_time"]) * 1000)
+
+                    tokens = {}
+                    if output_msg and hasattr(output_msg, "usage_metadata") and output_msg.usage_metadata:
+                        um = output_msg.usage_metadata
+                        tokens = {
+                            "input_tokens": getattr(um, "input_tokens", None) or (um.get("input_tokens") if isinstance(um, dict) else None),
+                            "output_tokens": getattr(um, "output_tokens", None) or (um.get("output_tokens") if isinstance(um, dict) else None),
+                            "total_tokens": getattr(um, "total_tokens", None) or (um.get("total_tokens") if isinstance(um, dict) else None),
+                        }
+
+                    output_text = str(output_msg.content) if output_msg and hasattr(output_msg, "content") else ""
+
+                    from model_pool import resolve_model
+                    model_name = resolve_model("llm").get("model", "unknown")
+
+                    yield {
+                        "type": "debug_llm_call",
+                        "call_id": run_id[:12],
+                        "node": tracked["node"],
+                        "model": model_name,
+                        "duration_ms": duration_ms,
+                        "input_tokens": tokens.get("input_tokens"),
+                        "output_tokens": tokens.get("output_tokens"),
+                        "total_tokens": tokens.get("total_tokens"),
+                        "input": tracked["input"][:5000],
+                        "output": output_text[:3000],
+                    }
+
             elif kind == "on_tool_start":
                 # Tool call started
+                if debug:
+                    run_id = event.get("run_id", "")
+                    debug_tracking[f"tool_{run_id}"] = {"start_time": time.time()}
                 tool_name = event.get("name", "")
                 tool_input = event.get("data", {}).get("input", {})
                 yield {
@@ -199,11 +268,19 @@ async def _run_agent_no_cache(
                 if is_cached:
                     logger.info(f"✓ Cache hit for tool: {tool_name}")
 
+                duration_ms = None
+                if debug:
+                    run_id = event.get("run_id", "")
+                    tracked = debug_tracking.pop(f"tool_{run_id}", None)
+                    if tracked:
+                        duration_ms = int((time.time() - tracked["start_time"]) * 1000)
+
                 yield {
                     "type": "tool_end",
                     "tool": tool_name,
                     "output": output_str,
                     "cached": is_cached,  # Add cached flag
+                    "duration_ms": duration_ms,
                 }
 
         yield {"type": "done"}

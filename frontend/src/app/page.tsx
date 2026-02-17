@@ -36,6 +36,7 @@ export default function HomePage() {
   const [inspectorFile, setInspectorFile] = useState<string | null>(null);
   const [showInspector, setShowInspector] = useState(false);
   const [isBackendOnline, setIsBackendOnline] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
 
   // Resizable panel widths
   const [leftWidth, setLeftWidth] = useState(LEFT_DEFAULT);
@@ -47,6 +48,23 @@ export default function HomePage() {
   // Initialize theme from localStorage on mount
   useEffect(() => {
     initTheme();
+    const savedDebug = localStorage.getItem("vibeworker_debug");
+    if (savedDebug === "true") {
+      setDebugMode(true);
+      setShowInspector(true);
+    }
+  }, []);
+
+  // Listen for debug toggle from settings dialog
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const enabled = (e as CustomEvent).detail;
+      setDebugMode(enabled);
+      // Auto-open inspector when debug is enabled
+      if (enabled) setShowInspector(true);
+    };
+    window.addEventListener("vibeworker-debug-toggle", handler);
+    return () => window.removeEventListener("vibeworker-debug-toggle", handler);
   }, []);
 
   // Health check
@@ -80,6 +98,7 @@ export default function HomePage() {
 
   const handleInspectorClose = useCallback(() => {
     setShowInspector(false);
+    setInspectorFile(null);
   }, []);
 
   const handleSessionSelect = useCallback((sessionId: string) => {
@@ -123,6 +142,9 @@ export default function HomePage() {
       window.removeEventListener("mouseup", handleMouseUp);
     };
   }, []);
+
+  // Debug panel shows inside InspectorPanel when no file is open
+  const activeDebug = debugMode && currentView === "chat";
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
@@ -190,7 +212,7 @@ export default function HomePage() {
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {showInspector ? "关闭编辑器" : "打开编辑器"}
+              {showInspector ? "关闭面板" : "打开面板"}
             </TooltipContent>
           </Tooltip>
         </div>
@@ -231,7 +253,7 @@ export default function HomePage() {
           />
         </main>
 
-        {/* Right Resize Handle + Inspector */}
+        {/* Right Panel: Inspector + integrated Debug */}
         {showInspector && (
           <>
             <div
@@ -245,6 +267,9 @@ export default function HomePage() {
               <InspectorPanel
                 filePath={inspectorFile}
                 onClose={handleInspectorClose}
+                onClearFile={() => setInspectorFile(null)}
+                debugMode={activeDebug}
+                sessionId={currentSessionId}
               />
             </aside>
           </>

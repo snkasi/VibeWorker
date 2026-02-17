@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon, Shield, FolderOpen, Zap, Plus, Pencil, Trash2 } from "lucide-react";
+import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon, Shield, FolderOpen, Zap, Plus, Pencil, Trash2, ListChecks, Bug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -440,6 +440,7 @@ export default function SettingsDialog() {
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [debugMode, setDebugMode] = useState(false);
     const [form, setForm] = useState<SettingsData>({
         openai_api_key: "",
         openai_api_base: "",
@@ -478,6 +479,8 @@ export default function SettingsDialog() {
 
     useEffect(() => {
         if (open) {
+            const savedDebug = localStorage.getItem("vibeworker_debug") === "true";
+            setDebugMode(savedDebug);
             setLoading(true);
             fetchSettings()
                 .then((data) => {
@@ -614,6 +617,32 @@ export default function SettingsDialog() {
                                 <p className="text-[10px] text-muted-foreground/60">
                                     所有用户数据（会话、记忆、技能、文件）存储于此，通过环境变量 DATA_DIR 修改
                                 </p>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                                    <Bug className="w-3.5 h-3.5" />
+                                    调试模式
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const next = !debugMode;
+                                            setDebugMode(next);
+                                            localStorage.setItem("vibeworker_debug", next ? "true" : "false");
+                                            window.dispatchEvent(new CustomEvent("vibeworker-debug-toggle", { detail: next }));
+                                        }}
+                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${debugMode ? "bg-primary" : "bg-border"}`}
+                                    >
+                                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${debugMode ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                                    </button>
+                                    <span className="text-xs text-muted-foreground">
+                                        {debugMode ? "开启" : "关闭"}
+                                        <span className="text-[10px] text-muted-foreground/50 ml-1">
+                                            开启后右侧面板显示 LLM/工具调用详情
+                                        </span>
+                                    </span>
+                                </div>
                             </div>
                         </TabsContent>
 
