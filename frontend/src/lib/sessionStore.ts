@@ -1,10 +1,15 @@
 import { useSyncExternalStore, useEffect, useCallback } from "react";
-import { streamChat, fetchSessionMessages, sendApproval, type ChatMessage, type ToolCall, type Plan, type PlanStep, type PlanRevision, type DebugLLMCall, type DebugToolCall } from "./api";
+import { streamChat, fetchSessionMessages, sendApproval, type ChatMessage, type ToolCall, type Plan, type PlanStep, type PlanRevision, type DebugLLMCall, type DebugToolCall, type DebugDivider, type DebugCall } from "./api";
 
 // Helper to check if a debug call is an LLM call
-function isLLMCall(call: DebugLLMCall | DebugToolCall): call is DebugLLMCall {
+export function isLLMCall(call: DebugCall): call is DebugLLMCall {
   // Check for call_id which is unique to DebugLLMCall
   return "call_id" in call;
+}
+
+// Helper to check if a debug call is a divider
+export function isDivider(call: DebugCall): call is DebugDivider {
+  return "_type" in call && call._type === "divider";
 }
 
 // ============================================
@@ -35,7 +40,7 @@ export interface SessionState {
   currentPlan: Plan | null;
   messagesLoaded: boolean;
   messagesLoading: boolean;
-  debugCalls: (DebugLLMCall | DebugToolCall)[];
+  debugCalls: DebugCall[];
 }
 
 type Listener = () => void;
@@ -164,7 +169,15 @@ class SessionStore {
       streamingContent: "",
       thinkingSteps: [],
       approvalRequest: null,
-      debugCalls: debugEnabled ? [] : this.getState(sessionId).debugCalls,
+      // 累积显示 debug 记录，不清空，但添加分隔卡片
+      debugCalls: debugEnabled ? [
+        ...this.getState(sessionId).debugCalls,
+        {
+          _type: "divider" as const,
+          userMessage: message,
+          timestamp: new Date().toISOString(),
+        },
+      ] : this.getState(sessionId).debugCalls,
     });
 
     let fullContent = "";
@@ -249,10 +262,10 @@ class SessionStore {
             // Update the in-progress debug call with final data
             if (debugEnabled) {
               const calls = this.getState(sessionId).debugCalls.slice();
-              // Find the last in-progress call for this tool
+              // Find the last in-progress call for this tool (skip dividers)
               for (let i = calls.length - 1; i >= 0; i--) {
                 const call = calls[i];
-                if (!isLLMCall(call) && call.tool === event.tool && call._inProgress) {
+                if (!isLLMCall(call) && !isDivider(call) && call.tool === event.tool && call._inProgress) {
                   calls[i] = {
                     ...call,
                     output: output,

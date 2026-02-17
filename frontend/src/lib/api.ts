@@ -89,6 +89,15 @@ export interface DebugToolCall {
   _inProgress?: boolean;  // Internal flag for in-progress state
 }
 
+// Divider card for separating multiple conversations in the same session
+export interface DebugDivider {
+  _type: "divider";
+  userMessage: string;
+  timestamp: string;
+}
+
+export type DebugCall = DebugLLMCall | DebugToolCall | DebugDivider;
+
 export interface SSEEvent {
   type: "token" | "tool_start" | "tool_end" | "llm_start" | "llm_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated" | "plan_revised" | "debug_llm_call";
   content?: string;

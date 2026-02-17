@@ -4,12 +4,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { Bug, X, ChevronRight, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sessionStore, useSessionState } from "@/lib/sessionStore";
-import type { DebugLLMCall, DebugToolCall } from "@/lib/api";
-
-function isLLMCall(call: DebugLLMCall | DebugToolCall): call is DebugLLMCall {
-  // Check for call_id which is unique to DebugLLMCall
-  return "call_id" in call;
-}
+import type { DebugCall, DebugDivider, DebugLLMCall, DebugToolCall } from "@/lib/api";
+import { isDivider, isLLMCall } from "@/lib/sessionStore";
 
 function formatDuration(ms: number | null): string {
   if (ms === null || ms === undefined) return "-";
@@ -21,6 +17,32 @@ function formatTokens(n: number | null): string {
   if (n === null || n === undefined) return "-";
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
+}
+
+// ---- Divider Card ----
+function DividerCard({ call }: { call: DebugDivider }) {
+  const time = new Date(call.timestamp);
+  const timeStr = time.toLocaleString();
+  const truncatedMessage = call.userMessage.length > 80
+    ? call.userMessage.slice(0, 80) + "..."
+    : call.userMessage;
+
+  return (
+    <div className="my-4 py-3 border-t-2 border-dashed border-muted-foreground/30">
+      <div className="flex items-start gap-3 text-xs">
+        <span className="shrink-0 text-lg">&#x1F4AC;</span>
+        <div className="flex-1 min-w-0">
+          <div className="font-medium text-foreground/90 mb-1">New Request</div>
+          <div className="text-muted-foreground/70 truncate font-mono text-[11px] mb-1">
+            {truncatedMessage}
+          </div>
+          <div className="text-[10px] text-muted-foreground/50">
+            {timeStr}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ---- Debug Call Item ----
@@ -151,9 +173,9 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
 }
 
 // ---- Debug Summary ----
-function DebugSummary({ calls }: { calls: (DebugLLMCall | DebugToolCall)[] }) {
+function DebugSummary({ calls }: { calls: DebugCall[] }) {
   const llmCalls = calls.filter(isLLMCall);
-  const toolCalls = calls.filter((c) => !isLLMCall(c)) as DebugToolCall[];
+  const toolCalls = calls.filter((c): c is DebugToolCall => !isLLMCall(c) && !isDivider(c));
 
   const llmDuration = llmCalls.reduce((sum, c) => sum + (c.duration_ms || 0), 0);
   const llmTokens = llmCalls.reduce((sum, c) => sum + (c.total_tokens || 0), 0);
@@ -236,10 +258,9 @@ export default function DebugPanel({ sessionId, onClose }: DebugPanelProps) {
         ) : (
           <>
             {debugCalls.map((call, index) => (
-              <DebugCallItem
-                key={index}
-                call={call}
-              />
+              isDivider(call)
+                ? <DividerCard key={index} call={call} />
+                : <DebugCallItem key={index} call={call} />
             ))}
           </>
         )}
