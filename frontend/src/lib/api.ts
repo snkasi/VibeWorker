@@ -182,12 +182,20 @@ export async function fetchSessions(): Promise<Session[]> {
   return data.sessions || [];
 }
 
+export interface SessionData {
+  messages: ChatMessage[];
+  debug_calls: (DebugLLMCall | DebugToolCall)[];
+}
+
 export async function fetchSessionMessages(
   sessionId: string
-): Promise<ChatMessage[]> {
+): Promise<SessionData> {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
   const data = await res.json();
-  return data.messages || [];
+  return {
+    messages: data.messages || [],
+    debug_calls: data.debug_calls || [],
+  };
 }
 
 export async function createSession(

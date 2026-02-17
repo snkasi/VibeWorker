@@ -108,14 +108,15 @@ class SessionStore {
     this.updateSession(sessionId, { messagesLoading: true });
 
     try {
-      const messages = await fetchSessionMessages(sessionId);
+      const sessionData = await fetchSessionMessages(sessionId);
       // Re-check streaming state (may have started while we were fetching)
       const current = this.getState(sessionId);
       if (current.isStreaming) {
         this.updateSession(sessionId, { messagesLoaded: true, messagesLoading: false });
       } else {
         this.updateSession(sessionId, {
-          messages,
+          messages: sessionData.messages,
+          debugCalls: sessionData.debug_calls,
           messagesLoaded: true,
           messagesLoading: false,
         });

@@ -145,6 +145,21 @@ class SessionManager:
         session_data["title"] = title
         self._write_session_data(session_id, session_data)
 
+    def save_debug_calls(self, session_id: str, debug_calls: list[dict]) -> None:
+        """Save debug calls (LLM/tool traces) to the session."""
+        if not debug_calls:
+            return
+        session_data = self.get_session_data(session_id)
+        existing = session_data.get("debug_calls", [])
+        existing.extend(debug_calls)
+        session_data["debug_calls"] = existing
+        self._write_session_data(session_id, session_data)
+
+    def get_debug_calls(self, session_id: str) -> list[dict]:
+        """Get debug calls for a session."""
+        session_data = self.get_session_data(session_id)
+        return session_data.get("debug_calls", [])
+
 
 # Singleton instance
 session_manager = SessionManager()

@@ -229,6 +229,7 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
 
     full_response = ""
     tool_calls_log = []
+    debug_calls_log = []  # Collect debug events for persistence
 
     # Queue for approval requests from SecurityGate
     approval_queue: asyncio.Queue = asyncio.Queue()
@@ -309,18 +310,22 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                             if is_cached:
                                 tc["cached"] = True
                             break
-                    sse_data = json.dumps({
+                    tool_end_data = {
                         "type": "tool_end",
                         "tool": event["tool"],
                         "output": event.get("output", "")[:1000],
                         "cached": is_cached,
                         "duration_ms": event.get("duration_ms"),
-                    }, ensure_ascii=False)
+                    }
+                    sse_data = json.dumps(tool_end_data, ensure_ascii=False)
                     yield f"data: {sse_data}\n\n"
+                    if debug and event.get("duration_ms") is not None:
+                        debug_calls_log.append(tool_end_data)
 
                 elif event_type == "debug_llm_call":
                     sse_data = json.dumps(event, ensure_ascii=False)
                     yield f"data: {sse_data}\n\n"
+                    debug_calls_log.append(event)
 
                 elif event_type == "done":
                     # Save assistant response to session
@@ -329,6 +334,10 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                             session_id, "assistant", full_response,
                             tool_calls=tool_calls_log if tool_calls_log else None,
                         )
+
+                    # Save debug calls if any
+                    if debug_calls_log:
+                        session_manager.save_debug_calls(session_id, debug_calls_log)
 
                     # Auto-extract memories if enabled
                     if settings.memory_auto_extract:
@@ -554,9 +563,13 @@ async def list_sessions():
 
 @app.get("/api/sessions/{session_id}")
 async def get_session(session_id: str):
-    """Get messages for a specific session."""
-    messages = session_manager.get_session(session_id)
-    return {"session_id": session_id, "messages": messages}
+    """Get messages and debug calls for a specific session."""
+    session_data = session_manager.get_session_data(session_id)
+    return {
+        "session_id": session_id,
+        "messages": session_data.get("messages", []),
+        "debug_calls": session_data.get("debug_calls", []),
+    }
 
 
 @app.post("/api/sessions")
