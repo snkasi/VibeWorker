@@ -49,6 +49,7 @@ function DividerCard({ call }: { call: DebugDivider }) {
 function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
   // Always collapsed by default
   const [expanded, setExpanded] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Determine card status
   const isRunning = !!call._inProgress;
@@ -101,7 +102,12 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
             )}
           </div>
         </button>
-        {expanded && (
+        <div
+          ref={contentRef}
+          className={`overflow-hidden transition-all duration-300 ease-in-out ${
+            expanded ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"
+          }`}
+        >
           <div className="border-t border-border px-3 py-2 space-y-2">
             <div>
               <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Input</div>
@@ -116,7 +122,7 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
               </pre>
             </div>
           </div>
-        )}
+        </div>
       </div>
     );
   }
@@ -150,7 +156,12 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
           </div>
         </div>
       </button>
-      {expanded && (
+      <div
+        ref={contentRef}
+        className={`overflow-hidden transition-all duration-300 ease-in-out ${
+          expanded ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
+        }`}
+      >
         <div className="border-t border-border px-3 py-2 space-y-2">
           {call.input && (
             <div>
@@ -167,7 +178,7 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
             </pre>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
