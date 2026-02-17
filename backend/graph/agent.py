@@ -1,4 +1,5 @@
 """Agent Graph - LangChain Agent orchestration with LangGraph runtime."""
+import json
 import logging
 import re
 import time
@@ -228,24 +229,44 @@ async def _run_agent_no_cache(
                             "total_tokens": getattr(um, "total_tokens", None) or (um.get("total_tokens") if isinstance(um, dict) else None),
                         }
 
-                    # Extract output text with multiple fallbacks
-                    output_text = ""
+                    # Extract complete output including tool calls for debug purposes
+                    output_parts = []
                     if output_msg:
+                        # 1. Content text
                         if hasattr(output_msg, "content"):
                             content = output_msg.content
-                            # Handle list content (some models return [{"text": "..."}])
                             if isinstance(content, list):
-                                output_text = " ".join(
+                                content_str = " ".join(
                                     item.get("text", str(item)) if isinstance(item, dict) else str(item)
                                     for item in content
                                 )
                             else:
-                                output_text = str(content) if content else ""
-                        # Fallback: try to get from additional_kwargs
-                        elif hasattr(output_msg, "additional_kwargs") and output_msg.additional_kwargs:
-                            output_text = str(output_msg.additional_kwargs.get("content", ""))
-                        else:
-                            output_text = str(output_msg)
+                                content_str = str(content) if content else ""
+                            if content_str.strip():
+                                output_parts.append(content_str)
+
+                        # 2. Tool calls (important for debug - shows what the LLM decided to call)
+                        tool_calls = []
+                        if hasattr(output_msg, "tool_calls") and output_msg.tool_calls:
+                            for tc in output_msg.tool_calls:
+                                tc_info = {
+                                    "name": getattr(tc, "name", getattr(tc, "function", {}).get("name") if hasattr(tc, "function") else "unknown"),
+                                    "arguments": getattr(tc, "arguments", getattr(tc, "function", {}).get("arguments") if hasattr(tc, "function") else ""),
+                                }
+                                tool_calls.append(tc_info)
+
+                        if tool_calls:
+                            output_parts.append("[TOOL_CALLS]: " + json.dumps(tool_calls, ensure_ascii=False, indent=2))
+
+                        # 3. Additional kwargs as fallback
+                        if not output_parts and hasattr(output_msg, "additional_kwargs") and output_msg.additional_kwargs:
+                            output_parts.append(str(output_msg.additional_kwargs))
+
+                        # 4. Full message as last resort
+                        if not output_parts:
+                            output_parts.append(str(output_msg))
+
+                    output_text = "\n\n".join(output_parts) if output_parts else "(no content)"
 
                     from model_pool import resolve_model
                     model_name = resolve_model("llm").get("model", "unknown")

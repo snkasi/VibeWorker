@@ -112,13 +112,7 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
             <div>
               <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider mb-1">Output</div>
               <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-muted/30 rounded-md p-2 max-h-[200px] overflow-auto text-foreground/80">
-                {call._inProgress
-                  ? "(streaming...)"
-                  : call.output
-                    ? call.output
-                    : call.output_tokens === 0 || call.output_tokens === null
-                      ? "(no text output - tool call only)"
-                      : "(empty)"}
+                {call._inProgress ? "(streaming...)" : (call.output || "(no content)")}
               </pre>
             </div>
           </div>
