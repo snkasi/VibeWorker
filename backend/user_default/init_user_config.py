@@ -51,9 +51,9 @@ MCP_ENABLED=true
 MCP_TOOL_CACHE_TTL=3600
 
 # ============================================
-# Agent Mode Configuration
+# Plan Configuration
 # ============================================
-AGENT_MODE=task
+PLAN_ENABLED=true
 PLAN_REVISION_ENABLED=true
 PLAN_REQUIRE_APPROVAL=false
 PLAN_MAX_STEPS=8

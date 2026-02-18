@@ -143,8 +143,7 @@ class Settings(BaseSettings):
     security_docker_enabled: bool = Field(default=False)
     security_docker_network: str = Field(default="none")
 
-    # Agent Mode Configuration
-    agent_mode: str = Field(default="task")  # Deprecated: no longer affects runtime. Kept for backward compat.
+    # Plan Configuration
     plan_enabled: bool = Field(default=True)  # Whether plan_create tool is available
     plan_revision_enabled: bool = Field(default=True)
     plan_require_approval: bool = Field(default=False)
@@ -174,13 +173,6 @@ class Settings(BaseSettings):
             if env_embed:
                 self.embedding_model = env_embed
 
-        # Migrate old PLAN_ENABLED → agent_mode (backward compatibility)
-        if self.agent_mode == "task":  # still default — check for old config
-            raw = os.getenv("AGENT_MODE", "")
-            if not raw:
-                old = os.getenv("PLAN_ENABLED", "")
-                if old.lower() == "false":
-                    self.agent_mode = "simple"
 
         # Compute derived paths from data_dir
         data = self.get_data_path()

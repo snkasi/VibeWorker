@@ -339,8 +339,8 @@ export interface SettingsData {
   enable_prompt_cache: boolean;
   enable_translate_cache: boolean;
   mcp_enabled: boolean;
-  // Agent mode configuration
-  agent_mode: "simple" | "task";
+  // Plan configuration
+  plan_enabled: boolean;
   plan_revision_enabled: boolean;
   plan_require_approval: boolean;
   plan_max_steps: number;

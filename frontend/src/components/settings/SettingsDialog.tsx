@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon, Shield, FolderOpen, Zap, Plus, Pencil, Trash2, ListChecks, Bug } from "lucide-react";
+import { Settings, Eye, EyeOff, Loader2, Save, Sun, Moon, Shield, FolderOpen, Zap, Plus, Pencil, Trash2, Bug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -462,7 +462,7 @@ export default function SettingsDialog() {
         enable_prompt_cache: true,
         enable_translate_cache: true,
         mcp_enabled: true,
-        agent_mode: "task",
+        plan_enabled: true,
         plan_revision_enabled: true,
         plan_require_approval: false,
         plan_max_steps: 8,
@@ -704,42 +704,20 @@ export default function SettingsDialog() {
                             />
                         </TabsContent>
 
-                        {/* Task Tab */}
                         <TabsContent value="task" className="space-y-3 mt-0">
                             <p className="text-xs text-muted-foreground mb-3">
-                                选择 Agent 工作模式
+                                配置 Agent 任务规划行为
                             </p>
-                            {/* Mode Selector */}
-                            <div className="grid grid-cols-2 gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => updateField("agent_mode", "simple")}
-                                    className={`flex flex-col items-center gap-1 py-3 rounded-lg border text-xs font-medium transition-all ${form.agent_mode === "simple"
-                                        ? "border-primary bg-primary/10 text-primary"
-                                        : "border-border bg-background text-muted-foreground hover:border-primary/30"
-                                        }`}
-                                >
-                                    <Zap className="w-4 h-4" />
-                                    <span>简单模式</span>
-                                    <span className="text-[10px] text-muted-foreground/60 font-normal">ReAct 直接执行</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => updateField("agent_mode", "task")}
-                                    className={`flex flex-col items-center gap-1 py-3 rounded-lg border text-xs font-medium transition-all ${form.agent_mode === "task"
-                                        ? "border-primary bg-primary/10 text-primary"
-                                        : "border-border bg-background text-muted-foreground hover:border-primary/30"
-                                        }`}
-                                >
-                                    <ListChecks className="w-4 h-4" />
-                                    <span>任务模式</span>
-                                    <span className="text-[10px] text-muted-foreground/60 font-normal">自动规划执行</span>
-                                </button>
-                            </div>
+                            {/* Plan Enabled Toggle */}
+                            <ToggleField
+                                label="自动任务规划"
+                                checked={form.plan_enabled}
+                                onChange={(v) => updateField("plan_enabled", v)}
+                                hint="(复杂任务自动生成多步骤计划并分步执行)"
+                            />
 
-                            {/* Task Mode Sub-options (hidden when simple mode) */}
-                            {form.agent_mode === "task" && <div className="space-y-3">
-                                <label className="text-xs font-medium text-muted-foreground">任务模式选项</label>
+                            {/* Sub-options (visible when plan_enabled) */}
+                            {form.plan_enabled && <div className="space-y-3 ml-4 pl-3 border-l-2 border-primary/20">
                                 <ToggleField
                                     label="规划修正"
                                     checked={form.plan_revision_enabled}
@@ -763,10 +741,10 @@ export default function SettingsDialog() {
 
                             {/* Mode Description */}
                             <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1.5">
-                                <div className="text-xs font-medium text-muted-foreground">模式说明</div>
+                                <div className="text-xs font-medium text-muted-foreground">说明</div>
                                 <ul className="text-[11px] text-muted-foreground/70 space-y-1 list-disc list-inside">
-                                    <li>简单问题自动跳过规划</li>
-                                    <li>复杂任务自动生成多步骤计划</li>
+                                    <li>关闭时，Agent 始终以 ReAct 模式直接执行</li>
+                                    <li>开启后，复杂任务自动生成多步骤计划</li>
                                     <li>开启修正后，执行失败时自动调整计划</li>
                                 </ul>
                             </div>
