@@ -1,6 +1,6 @@
 """VibeWorker Configuration Management"""
 import os
-import shutil
+
 from pathlib import Path
 from typing import Optional
 
@@ -33,21 +33,19 @@ def _resolve_data_dir() -> Path:
 def _bootstrap_env():
     """Two-stage .env loading:
     1. Resolve data_dir from env/default
-    2. Copy default .env on first run
+    2. Generate default .env on first run
     3. Load data_dir/.env (user config)
     """
+    from user_default.init_user_config import init_env_file
+
     data_dir = _resolve_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    user_env = data_dir / ".env"
-
-    # First-run: copy default .env template
-    if not user_env.exists():
-        default_env = PROJECT_ROOT / "user_default" / ".env"
-        if default_env.exists():
-            shutil.copy2(default_env, user_env)
+    # First-run: generate default .env from template
+    init_env_file(data_dir)
 
     # Load user .env (overrides system env vars)
+    user_env = data_dir / ".env"
     if user_env.exists():
         load_dotenv(user_env, override=True)
 
@@ -210,61 +208,14 @@ class Settings(BaseSettings):
         return self.get_data_path() / ".env"
 
     def ensure_dirs(self) -> None:
-        """Ensure all required directories exist, copy defaults on first run."""
-        data = self.get_data_path()
-        for dir_path in [
-            self.memory_dir,
-            self.memory_dir / "logs",
-            self.sessions_dir,
-            self.skills_dir,
-            self.workspace_dir,
-            self.knowledge_dir,
-            self.storage_dir,
-            self.cache_dir,
-            self.cache_dir / "url",
-            data / "tmp",
-            self.cache_dir / "llm",
-            self.cache_dir / "prompt",
-            self.cache_dir / "translate",
-            data / "logs",
-        ]:
-            dir_path.mkdir(parents=True, exist_ok=True)
+        """Ensure all required directories and default files exist.
 
-        # First-run: copy defaults from user_default/ template directory
-        defaults_dir = PROJECT_ROOT / "user_default"
+        Delegates to init_user_config which checks each file independently:
+        missing files are restored without affecting existing ones.
+        """
+        from user_default.init_user_config import init_user_config
 
-        # Copy workspace templates
-        src_workspace = defaults_dir / "workspace"
-        if src_workspace.exists() and not (self.workspace_dir / "SOUL.md").exists():
-            for f in src_workspace.iterdir():
-                if f.is_file():
-                    dest = self.workspace_dir / f.name
-                    if not dest.exists():
-                        shutil.copy2(f, dest)
-
-        # Copy default skills
-        src_skills = defaults_dir / "skills"
-        if src_skills.exists():
-            for skill_dir in src_skills.iterdir():
-                if skill_dir.is_dir():
-                    dest_skill = self.skills_dir / skill_dir.name
-                    if not dest_skill.exists():
-                        shutil.copytree(skill_dir, dest_skill)
-
-        # Copy default memory (MEMORY.md)
-        src_memory = defaults_dir / "memory"
-        if src_memory.exists():
-            for f in src_memory.iterdir():
-                if f.is_file():
-                    dest = self.memory_dir / f.name
-                    if not dest.exists():
-                        shutil.copy2(f, dest)
-
-        # Copy default mcp_servers.json
-        src_mcp = defaults_dir / "mcp_servers.json"
-        dest_mcp = data / "mcp_servers.json"
-        if src_mcp.exists() and not dest_mcp.exists():
-            shutil.copy2(src_mcp, dest_mcp)
+        init_user_config(self.get_data_path())
 
 
 settings = Settings()

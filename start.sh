@@ -2,7 +2,8 @@
 # VibeWorker 启动脚本
 # 用法: ./start.sh [start|stop|restart|status]
 
-set -e
+# 注意：不用 set -e，避免 kill/stop 失败时误退出整个脚本
+set +e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
@@ -109,23 +110,28 @@ stop_process() {
     if is_running "$pid"; then
         log_info "停止 $name (PID: $pid)..."
 
-        # 尝试优雅终止
-        kill "$pid" 2>/dev/null || true
+        # 尝试优雅终止整个进程组（杀子进程）
+        kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
 
         # 等待进程结束
         local count=0
-        while is_running "$pid" && [[ $count -lt 10 ]]; do
+        while is_running "$pid" && [[ $count -lt 5 ]]; do
             sleep 1
             ((count++))
         done
 
-        # 如果还在运行，强制终止
+        # 如果还在运行，强制终止整个进程组
         if is_running "$pid"; then
-            log_warn "强制终止 $name..."
-            kill -9 "$pid" 2>/dev/null || true
+            log_warn "强制终止 $name 进程组..."
+            kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+            sleep 1
         fi
 
-        log_info "$name 已停止"
+        if is_running "$pid"; then
+            log_error "$name (PID: $pid) 无法终止，将依赖端口清理"
+        else
+            log_info "$name 已停止"
+        fi
     else
         log_warn "$name 进程不存在 (PID: $pid)"
     fi
@@ -135,12 +141,43 @@ stop_process() {
 
 kill_port() {
     local port=$1
-    local pids
-    pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    local pids=""
+
+    # 兼容多种环境：优先 lsof，fallback 到 ss+awk 或 fuser
+    if command -v lsof &>/dev/null; then
+        pids=$(lsof -ti :"$port" 2>/dev/null || true)
+    elif command -v ss &>/dev/null; then
+        pids=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | sort -u || true)
+    elif command -v fuser &>/dev/null; then
+        pids=$(fuser "$port"/tcp 2>/dev/null || true)
+    fi
+
     if [[ -n "$pids" ]]; then
         echo "$pids" | xargs kill -9 2>/dev/null || true
         log_info "已清理端口 $port 上的残留进程"
     fi
+}
+
+wait_port_free() {
+    local port=$1
+    local retries=0
+    while [[ $retries -lt 5 ]]; do
+        # 检查端口是否已释放
+        if command -v lsof &>/dev/null; then
+            lsof -ti :"$port" &>/dev/null || return 0
+        elif command -v ss &>/dev/null; then
+            ss -tlnp 2>/dev/null | grep -q ":$port " || return 0
+        else
+            # 没有工具可用，直接返回
+            return 0
+        fi
+        ((retries++))
+        log_info "等待端口 $port 释放... ($retries/5)"
+        kill_port "$port"
+        sleep 1
+    done
+    log_warn "端口 $port 仍被占用，请手动检查！"
+    return 1
 }
 
 stop_backend() {
@@ -148,12 +185,14 @@ stop_backend() {
     # uvicorn reload=True 会 fork 子进程，PID 文件只记录父进程
     # 兜底：杀掉仍占用端口的进程
     kill_port 8088
+    wait_port_free 8088
 }
 
 stop_frontend() {
     stop_process "frontend"
     # Next.js 可能有子进程，尝试清理
     kill_port 3000
+    wait_port_free 3000
 }
 
 show_status() {

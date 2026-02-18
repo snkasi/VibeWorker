@@ -106,19 +106,57 @@ echo.
 goto :end
 
 :kill_port
-:: 杀死占用指定端口的所有进程
+:: 杀死占用指定端口的所有进程（含子进程树）
 :: %1 = 端口号, %2 = 显示名称
 set "FOUND=0"
+set "KILLED_PIDS="
+
+:: 第一轮：通过端口查找并杀死进程树
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr "LISTENING" ^| findstr ":%~1 "') do (
     if not "%%a"=="0" (
-        taskkill /PID %%a /F >nul 2>&1
-        if not errorlevel 1 (
+        :: 去重：检查 PID 是否已被处理
+        echo !KILLED_PIDS! | findstr /C:" %%a " >nul 2>&1
+        if errorlevel 1 (
+            set "KILLED_PIDS=!KILLED_PIDS! %%a "
+            taskkill /PID %%a /F /T >nul 2>&1
             echo [INFO] 停止%~2 (PID: %%a, 端口: %~1)
             set "FOUND=1"
         )
     )
 )
-if "!FOUND!"=="0" (
+
+:: 兜底：通过窗口标题杀残留进程
+if "%~1"=="8088" (
+    taskkill /FI "WINDOWTITLE eq VibeWorker-Backend*" /F /T >nul 2>&1
+)
+if "%~1"=="3000" (
+    taskkill /FI "WINDOWTITLE eq VibeWorker-Frontend*" /F /T >nul 2>&1
+)
+
+:: 等待端口释放
+if "!FOUND!"=="1" (
+    set "RETRIES=0"
+    :wait_port_free
+    timeout /t 1 /nobreak >nul
+    set /a RETRIES+=1
+    netstat -ano 2>nul | findstr "LISTENING" | findstr ":%~1 " >nul 2>&1
+    if not errorlevel 1 (
+        if !RETRIES! LSS 5 (
+            echo [INFO] 等待端口 %~1 释放... (!RETRIES!/5)
+            :: 再次尝试杀死残留进程
+            for /f "tokens=5" %%b in ('netstat -ano 2^>nul ^| findstr "LISTENING" ^| findstr ":%~1 "') do (
+                if not "%%b"=="0" (
+                    taskkill /PID %%b /F /T >nul 2>&1
+                )
+            )
+            goto :wait_port_free
+        ) else (
+            echo [WARN] 端口 %~1 仍被占用，请手动检查！
+        )
+    ) else (
+        echo [INFO] 端口 %~1 已释放
+    )
+) else (
     echo [INFO] %~2未运行 (端口 %~1 空闲)
 )
 goto :eof
