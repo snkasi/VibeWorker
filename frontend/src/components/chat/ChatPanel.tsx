@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Square, Sparkles, Zap } from "lucide-react";
+import { Send, Square, Sparkles, Zap, ChevronRight, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -126,6 +126,38 @@ function wrapAsCodeBlock(code: string, lang = ""): string {
     return `\`\`\`${lang}\n${cleaned}\n\`\`\``;
 }
 
+/**
+ * 计算 segments 的折叠分割点。
+ * 返回最终回答起始的 segment 索引，如果不需要折叠则返回 -1。
+ * 规则：最后一个 tool segment 之后的第一个有内容的 text segment 即为最终回答的起始。
+ */
+function getFinalAnswerIndex(segments: MessageSegment[]): number {
+    // 找到最后一个 tool segment 的索引
+    let lastToolIdx = -1;
+    for (let i = segments.length - 1; i >= 0; i--) {
+        if (segments[i].type === "tool") {
+            lastToolIdx = i;
+            break;
+        }
+    }
+    // 没有工具调用，不需要折叠
+    if (lastToolIdx === -1) return -1;
+    // 最后一个 tool 之后是否有文本 segment
+    for (let i = lastToolIdx + 1; i < segments.length; i++) {
+        const seg = segments[i];
+        if (seg.type === "text" && seg.content) {
+            return i; // 这是最终回答的起始
+        }
+    }
+    // 最后一个 tool 之后没有文本，不折叠
+    return -1;
+}
+
+/** 统计 segments 中工具调用的数量 */
+function countToolSegments(segments: MessageSegment[]): number {
+    return segments.filter(s => s.type === "tool").length;
+}
+
 /** Render tool input in a friendly formatted way */
 function ToolInputDisplay({ toolName, input }: { toolName: string; input: string }) {
     try {
@@ -223,6 +255,8 @@ export default function ChatPanel({
     const [inputValue, setInputValue] = useState("");
     const [expandedTools, setExpandedTools] = useState<Set<number>>(new Set());
     const [expandedStreamingTools, setExpandedStreamingTools] = useState<Set<number>>(new Set());
+    // 记录哪些消息的中间过程被展开了（默认折叠）
+    const [expandedProcesses, setExpandedProcesses] = useState<Set<number>>(new Set());
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -280,6 +314,15 @@ export default function ChatPanel({
         });
     };
 
+    const toggleProcessExpand = (msgIndex: number) => {
+        setExpandedProcesses((prev) => {
+            const next = new Set(prev);
+            if (next.has(msgIndex)) next.delete(msgIndex);
+            else next.add(msgIndex);
+            return next;
+        });
+    };
+
     return (
         <div className="flex flex-col h-full">
             {/* Messages Area */}
@@ -316,8 +359,14 @@ export default function ChatPanel({
                                 )}
                                 {/* 按时间顺序渲染 segments（文本和工具调用穿插显示） */}
                                 {msg.segments && msg.segments.length > 0 ? (
-                                    <>
-                                        {msg.segments.map((seg, j) => {
+                                    (() => {
+                                        const finalIdx = getFinalAnswerIndex(msg.segments);
+                                        const shouldCollapse = finalIdx > 0;
+                                        const isProcessExpanded = expandedProcesses.has(i);
+                                        const toolCount = shouldCollapse ? countToolSegments(msg.segments.slice(0, finalIdx)) : 0;
+
+                                        // 渲染单个 segment 的辅助函数
+                                        const renderSegment = (seg: MessageSegment, j: number) => {
                                             if (seg.type === "text") {
                                                 return seg.content ? (
                                                     <div key={j} className="chat-message-content text-sm">
@@ -372,8 +421,41 @@ export default function ChatPanel({
                                                     </div>
                                                 </div>
                                             );
-                                        })}
-                                    </>
+                                        };
+
+                                        return shouldCollapse ? (
+                                            <>
+                                                {/* 中间过程：可折叠区域 */}
+                                                <div className="mb-2">
+                                                    <div
+                                                        className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border/50 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
+                                                        onClick={() => toggleProcessExpand(i)}
+                                                    >
+                                                        {isProcessExpanded ? (
+                                                            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                                                        ) : (
+                                                            <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                                                        )}
+                                                        <span className="text-xs text-muted-foreground">
+                                                            🔄 执行了 {toolCount} 个步骤
+                                                        </span>
+                                                    </div>
+                                                    {isProcessExpanded && (
+                                                        <div className="mt-1 pl-2 border-l-2 border-border/30 animate-fade-in-up">
+                                                            {msg.segments.slice(0, finalIdx).map((seg, j) => renderSegment(seg, j))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                {/* 最终回答：始终展开 */}
+                                                {msg.segments.slice(finalIdx).map((seg, j) => renderSegment(seg, finalIdx + j))}
+                                            </>
+                                        ) : (
+                                            /* 不需要折叠：正常渲染所有 segments */
+                                            <>
+                                                {msg.segments.map((seg, j) => renderSegment(seg, j))}
+                                            </>
+                                        );
+                                    })()
                                 ) : (
                                     /* 兼容旧格式：没有 segments 时沿用原逻辑 */
                                     <>
