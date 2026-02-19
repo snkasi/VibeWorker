@@ -5,6 +5,7 @@ Server starts at: http://localhost:8088
 """
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import asyncio
 from pathlib import Path
 from typing import Optional
@@ -27,10 +28,22 @@ from engine import events
 from tools.rag_tool import rebuild_index
 from memory_manager import memory_manager
 
-# 配置日志
+# 配置日志：同时输出到 console 和文件
+_log_dir = Path(settings.data_dir).expanduser().resolve() / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        RotatingFileHandler(
+            _log_dir / "engine.log",
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=5,
+            encoding="utf-8",
+        ),
+    ],
 )
 logger = logging.getLogger("vibeworker")
 
@@ -231,10 +244,12 @@ async def chat(request: ChatRequest):
 
 
 async def _stream_agent_response(message: str, history: list, session_id: str, debug: bool = False):
-    """Generator for SSE streaming — 通过 StateGraph 统一事件流。
+    """Generator for SSE streaming — 通过统一输出队列合并 agent 事件和审批事件。
 
-    侧通道事件（plan_created/updated/revised）现在通过 pending_events
-    在主事件流中传递，不再需要 drain side-channel queues。
+    使用 asyncio.Queue 作为统一输出通道，解决审批请求死锁问题：
+    - 后台任务泵送 run_agent() 产生的事件到 output_queue
+    - 审批回调直接写入 output_queue（不经过 ctx.approval_queue）
+    - 主生成器从 output_queue 读取，两个来源的事件都能及时发送
     """
     # 构建每请求上下文
     ctx = RunContext(
@@ -245,10 +260,12 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
     set_run_context(ctx)
     set_session_id(session_id)
 
-    # Security gate SSE callback（仍使用 approval_queue）
-    # 注意：security_gate 内部使用 await 调用此回调，必须是 async 函数
+    # 统一输出队列：合并 agent 事件和审批事件
+    output_queue: asyncio.Queue = asyncio.Queue()
+
+    # 审批回调直接写入输出队列，不经过 ctx.approval_queue，避免死锁
     async def sse_approval_callback(data):
-        ctx.approval_queue.put_nowait(data)
+        await output_queue.put(data)
 
     try:
         from security import security_gate
@@ -264,16 +281,28 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
     tool_calls_log = []
     current_plan = None
 
-    try:
-        async for event in run_agent(message, history, ctx, middlewares=[debug_mw]):
-            event_type = event.get("type", "")
+    # 后台任务：泵送 agent 事件到输出队列
+    async def pump_agent_events():
+        try:
+            async for event in run_agent(message, history, ctx, middlewares=[debug_mw]):
+                await output_queue.put(event)
+        except Exception as e:
+            logger.error(f"Agent 事件流异常: {e}", exc_info=True)
+            await output_queue.put(events.build_error(str(e)))
+        finally:
+            # 发送结束哨兵，通知主循环退出
+            await output_queue.put(None)
 
-            # Drain security approval queue（plan 事件已在主流中）
-            while not ctx.approval_queue.empty():
-                try:
-                    yield serialize_sse(ctx.approval_queue.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
+    pump_task = asyncio.create_task(pump_agent_events())
+
+    try:
+        while True:
+            event = await output_queue.get()
+            # None 为结束哨兵，表示 agent 事件流已结束
+            if event is None:
+                break
+
+            event_type = event.get("type", "")
 
             # 累积数据用于会话持久化
             if event_type == "token":
@@ -333,13 +362,19 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                 break
 
     except Exception as e:
-        logger.error(f"Error in agent stream: {e}", exc_info=True)
+        logger.error(f"SSE 流异常: {e}", exc_info=True)
         yield serialize_sse(events.build_error(str(e)))
     finally:
         try:
             from security import security_gate
             security_gate.set_sse_callback(None)
         except Exception:
+            pass
+        # 确保后台任务不泄漏
+        pump_task.cancel()
+        try:
+            await pump_task
+        except (asyncio.CancelledError, Exception):
             pass
 
 
@@ -389,9 +424,10 @@ async def approve_tool(request: ApprovalRequest):
         if resolved:
             return {"status": "ok", "request_id": request.request_id, "approved": request.approved}
         else:
-            raise HTTPException(status_code=404, detail="Approval request not found or expired")
-    except HTTPException:
-        raise
+            # 审批请求已过期（超时自动拒绝）或已被处理，返回 200 而非 404
+            # 操作已被拒绝，前端只需关闭对话框即可
+            logger.info("审批请求 %s 已过期或已处理", request.request_id)
+            return {"status": "expired", "request_id": request.request_id}
     except Exception as e:
         logger.error(f"Failed to process approval: {e}")
         raise HTTPException(status_code=500, detail=str(e))
