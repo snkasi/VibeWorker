@@ -17,6 +17,7 @@ import {
     fetchSettings, updateSettings, type SettingsData,
     fetchModelPool, addPoolModel, updatePoolModel, deletePoolModel,
     updateAssignments, testPoolModel,
+    fetchGraphConfig, updateGraphConfig, type GraphConfigData,
     type PoolModel, type ModelPoolData, type TestModelResult,
 } from "@/lib/api";
 
@@ -441,6 +442,18 @@ export default function SettingsDialog() {
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [debugMode, setDebugMode] = useState(false);
+    // 图配置状态
+    const [graphConfig, setGraphConfig] = useState<GraphConfigData>({
+        agent_max_iterations: 50,
+        planner_enabled: true,
+        approval_enabled: false,
+        executor_max_iterations: 30,
+        executor_max_steps: 8,
+        replanner_enabled: true,
+        replanner_skip_on_success: true,
+        summarizer_enabled: true,
+        recursion_limit: 100,
+    });
     const [form, setForm] = useState<SettingsData>({
         openai_api_key: "",
         openai_api_base: "",
@@ -485,11 +498,18 @@ export default function SettingsDialog() {
             const savedDebug = localStorage.getItem("vibeworker_debug") === "true";
             setDebugMode(savedDebug);
             setLoading(true);
-            fetchSettings()
-                .then((data) => {
+            // 并行加载 settings 和 graph config
+            Promise.all([
+                fetchSettings(),
+                fetchGraphConfig().catch(() => null),
+            ])
+                .then(([settingsData, graphData]) => {
                     const saved = localStorage.getItem("vw-theme") as "light" | "dark" | null;
                     // Merge: keep form defaults as fallback for any missing fields from backend
-                    setForm((prev) => ({ ...prev, ...data, theme: saved || data.theme || "light" }));
+                    setForm((prev) => ({ ...prev, ...settingsData, theme: saved || settingsData.theme || "light" }));
+                    if (graphData) {
+                        setGraphConfig(graphData);
+                    }
                 })
                 .catch(() => { })
                 .finally(() => setLoading(false));
@@ -502,7 +522,11 @@ export default function SettingsDialog() {
             applyTheme(form.theme || "light");
             // Exclude theme from backend payload (theme is frontend-only, stored in localStorage)
             const { theme: _, ...backendSettings } = form;
-            await updateSettings(backendSettings as SettingsData);
+            // 并行保存 settings 和 graph config
+            await Promise.all([
+                updateSettings(backendSettings as SettingsData),
+                updateGraphConfig(graphConfig),
+            ]);
             setOpen(false);
         } catch {
             // ignore
@@ -513,6 +537,10 @@ export default function SettingsDialog() {
 
     const updateField = useCallback((key: keyof SettingsData, value: string | number | boolean) => {
         setForm((prev) => ({ ...prev, [key]: value }));
+    }, []);
+
+    const updateGraphField = useCallback((key: keyof GraphConfigData, value: number | boolean) => {
+        setGraphConfig((prev) => ({ ...prev, [key]: value }));
     }, []);
 
     const handleThemeChange = (theme: "light" | "dark") => {
@@ -711,33 +739,71 @@ export default function SettingsDialog() {
                             {/* Plan Enabled Toggle */}
                             <ToggleField
                                 label="自动任务规划"
-                                checked={form.plan_enabled}
-                                onChange={(v) => updateField("plan_enabled", v)}
+                                checked={graphConfig.planner_enabled}
+                                onChange={(v) => updateGraphField("planner_enabled", v)}
                                 hint="(复杂任务自动生成多步骤计划并分步执行)"
                             />
 
-                            {/* Sub-options (visible when plan_enabled) */}
-                            {form.plan_enabled && <div className="space-y-3 ml-4 pl-3 border-l-2 border-primary/20">
+                            {/* Sub-options (visible when planner_enabled) */}
+                            {graphConfig.planner_enabled && <div className="space-y-3 ml-4 pl-3 border-l-2 border-primary/20">
                                 <ToggleField
                                     label="规划修正"
-                                    checked={form.plan_revision_enabled}
-                                    onChange={(v) => updateField("plan_revision_enabled", v)}
+                                    checked={graphConfig.replanner_enabled}
+                                    onChange={(v) => updateGraphField("replanner_enabled", v)}
                                     hint="(执行中发现问题时自动修正后续步骤)"
                                 />
                                 <ToggleField
+                                    label="成功跳过重规划"
+                                    checked={graphConfig.replanner_skip_on_success}
+                                    onChange={(v) => updateGraphField("replanner_skip_on_success", v)}
+                                    hint="(最后一步成功时跳过 LLM 评估)"
+                                />
+                                <ToggleField
                                     label="计划审批"
-                                    checked={form.plan_require_approval}
-                                    onChange={(v) => updateField("plan_require_approval", v)}
+                                    checked={graphConfig.approval_enabled}
+                                    onChange={(v) => updateGraphField("approval_enabled", v)}
                                     hint="(生成计划后需用户确认再执行)"
+                                />
+                                <ToggleField
+                                    label="执行后总结"
+                                    checked={graphConfig.summarizer_enabled}
+                                    onChange={(v) => updateGraphField("summarizer_enabled", v)}
+                                    hint="(计划完成后自动生成总结回复)"
                                 />
                                 <SettingsField
                                     label="最大步骤数"
-                                    value={String(form.plan_max_steps)}
-                                    onChange={(v) => updateField("plan_max_steps", parseInt(v) || 8)}
+                                    value={String(graphConfig.executor_max_steps)}
+                                    onChange={(v) => updateGraphField("executor_max_steps", parseInt(v) || 8)}
                                     type="number"
                                     placeholder="8"
                                 />
+                                <SettingsField
+                                    label="步骤执行最大迭代"
+                                    value={String(graphConfig.executor_max_iterations)}
+                                    onChange={(v) => updateGraphField("executor_max_iterations", parseInt(v) || 30)}
+                                    type="number"
+                                    placeholder="30"
+                                />
                             </div>}
+
+                            {/* Agent 高级设置 */}
+                            <div className="space-y-2 pt-3 border-t border-border">
+                                <label className="text-xs font-medium text-muted-foreground">Agent 高级设置</label>
+                                <SettingsField
+                                    label="Agent 最大迭代次数"
+                                    value={String(graphConfig.agent_max_iterations)}
+                                    onChange={(v) => updateGraphField("agent_max_iterations", parseInt(v) || 50)}
+                                    type="number"
+                                    placeholder="50"
+                                />
+                                <SettingsField
+                                    label="图递归限制"
+                                    value={String(graphConfig.recursion_limit)}
+                                    onChange={(v) => updateGraphField("recursion_limit", parseInt(v) || 100)}
+                                    type="number"
+                                    placeholder="100"
+                                />
+                            </div>
 
                             {/* Mode Description */}
                             <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-1.5">

@@ -98,6 +98,16 @@ def build_error(message: str) -> dict:
     return {"type": ERROR, "content": message}
 
 
+def build_plan_approval_request(plan_info: dict) -> dict:
+    """构建计划审批请求事件。"""
+    return {
+        "type": PLAN_APPROVAL_REQUEST,
+        "plan_id": plan_info.get("plan_id", ""),
+        "title": plan_info.get("title", ""),
+        "steps": plan_info.get("steps", []),
+    }
+
+
 # --- 原始事件辅助函数（从 LangGraph astream_events 提取数据） ---
 
 def build_tool_start_from_raw(event: dict) -> dict:

@@ -978,3 +978,45 @@ export async function translateContent(
   }
   return await res.json();
 }
+
+// ============================================
+// Graph Config API (Agent 引擎配置)
+// ============================================
+export interface GraphConfigData {
+  // Agent 节点
+  agent_max_iterations: number;
+  // Planner 节点
+  planner_enabled: boolean;
+  // Approval 节点
+  approval_enabled: boolean;
+  // Executor 节点
+  executor_max_iterations: number;
+  executor_max_steps: number;
+  // Replanner 节点
+  replanner_enabled: boolean;
+  replanner_skip_on_success: boolean;
+  // Summarizer 节点
+  summarizer_enabled: boolean;
+  // 全局设置
+  recursion_limit: number;
+}
+
+export async function fetchGraphConfig(): Promise<GraphConfigData> {
+  const res = await fetch(`${API_BASE}/api/graph-config`);
+  if (!res.ok) throw new Error("Failed to fetch graph config");
+  return await res.json();
+}
+
+export async function updateGraphConfig(
+  data: Partial<GraphConfigData>
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/graph-config`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.detail || "Failed to update graph config");
+  }
+}

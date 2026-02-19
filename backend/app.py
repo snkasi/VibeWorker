@@ -231,8 +231,12 @@ async def chat(request: ChatRequest):
 
 
 async def _stream_agent_response(message: str, history: list, session_id: str, debug: bool = False):
-    """Generator for SSE streaming — simplified via RunContext + Middleware."""
-    # Build per-request context (replaces 5 global set_xxx calls)
+    """Generator for SSE streaming — 通过 StateGraph 统一事件流。
+
+    侧通道事件（plan_created/updated/revised）现在通过 pending_events
+    在主事件流中传递，不再需要 drain side-channel queues。
+    """
+    # 构建每请求上下文
     ctx = RunContext(
         session_id=session_id,
         debug=debug,
@@ -241,16 +245,18 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
     set_run_context(ctx)
     set_session_id(session_id)
 
-    # Security gate SSE callback (still uses approval_queue on ctx)
+    # Security gate SSE callback（仍使用 approval_queue）
+    # 注意：security_gate 内部使用 await 调用此回调，必须是 async 函数
+    async def sse_approval_callback(data):
+        ctx.approval_queue.put_nowait(data)
+
     try:
         from security import security_gate
-        security_gate.set_sse_callback(
-            lambda data: ctx.approval_queue.put_nowait(data)
-        )
+        security_gate.set_sse_callback(sse_approval_callback)
     except Exception:
         pass
 
-    # Debug middleware handles all tracing + persistence
+    # Debug middleware
     debug_level = DebugLevel.STANDARD if debug else DebugLevel.OFF
     debug_mw = DebugMiddleware(level=debug_level)
 
@@ -262,15 +268,14 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
         async for event in run_agent(message, history, ctx, middlewares=[debug_mw]):
             event_type = event.get("type", "")
 
-            # Drain side-channel queues (plan events + approval events)
-            for q in (ctx.plan_queue, ctx.approval_queue):
-                while not q.empty():
-                    try:
-                        yield serialize_sse(q.get_nowait())
-                    except asyncio.QueueEmpty:
-                        break
+            # Drain security approval queue（plan 事件已在主流中）
+            while not ctx.approval_queue.empty():
+                try:
+                    yield serialize_sse(ctx.approval_queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
 
-            # Accumulate data for session persistence
+            # 累积数据用于会话持久化
             if event_type == "token":
                 full_response += event.get("content", "")
             elif event_type == "tool_start":
@@ -306,11 +311,11 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                         completed_steps = current_plan.get("steps", [])[:keep_completed]
                         current_plan["steps"] = completed_steps + revised_steps
 
-            # Send SSE to client
+            # 发送 SSE 到客户端
             yield serialize_sse(event)
 
             if event_type == "done":
-                # Persist assistant response
+                # 持久化 assistant 回复
                 if full_response:
                     session_manager.save_message(
                         session_id, "assistant", full_response,
@@ -318,7 +323,7 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                         plan=current_plan,
                     )
 
-                # Auto-extract memories
+                # 自动提取记忆
                 if settings.memory_auto_extract:
                     try:
                         recent_messages = session_manager.get_session(session_id)[-6:]
@@ -341,7 +346,14 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
 # ============================================
 # 计划审批端点
 # ============================================
-from plan_approval import resolve_plan_approval
+
+# 全局注册表：plan_id → RunContext.approval_queue（由 runner 注册）
+_plan_approval_contexts: dict[str, asyncio.Queue] = {}
+
+
+def register_plan_approval_context(plan_id: str, queue: asyncio.Queue) -> None:
+    """注册计划审批上下文（由 runner 在 interrupt 时调用）。"""
+    _plan_approval_contexts[plan_id] = queue
 
 
 class PlanApprovalRequest(BaseModel):
@@ -351,9 +363,10 @@ class PlanApprovalRequest(BaseModel):
 
 @app.post("/api/plan/approve")
 async def approve_plan(request: PlanApprovalRequest):
-    """Approve or deny a pending plan execution."""
-    resolved = resolve_plan_approval(request.plan_id, request.approved)
-    if resolved:
+    """审批或拒绝待执行的计划。"""
+    queue = _plan_approval_contexts.pop(request.plan_id, None)
+    if queue is not None:
+        await queue.put({"approved": request.approved})
         return {"status": "ok", "plan_id": request.plan_id, "approved": request.approved}
     else:
         raise HTTPException(status_code=404, detail="Plan approval request not found or expired")
@@ -1072,6 +1085,27 @@ class SettingsUpdateRequest(BaseModel):
     data_dir: Optional[str] = None
 
 
+# 图配置更新请求模型
+class GraphConfigUpdateRequest(BaseModel):
+    """图配置更新请求。支持部分更新（仅提供需要修改的字段）。"""
+    # Agent 节点配置
+    agent_max_iterations: Optional[int] = None
+    # Planner 节点配置
+    planner_enabled: Optional[bool] = None
+    # Approval 节点配置
+    approval_enabled: Optional[bool] = None
+    # Executor 节点配置
+    executor_max_iterations: Optional[int] = None
+    executor_max_steps: Optional[int] = None
+    # Replanner 节点配置
+    replanner_enabled: Optional[bool] = None
+    replanner_skip_on_success: Optional[bool] = None
+    # Summarizer 节点配置
+    summarizer_enabled: Optional[bool] = None
+    # 全局设置
+    recursion_limit: Optional[int] = None
+
+
 def _read_env_file() -> dict:
     """Read user .env file from data directory and parse into dict."""
     env_path = settings.get_env_path()
@@ -1254,6 +1288,90 @@ async def update_settings(request: SettingsUpdateRequest):
     invalidate_caches()
     logger.info("Settings reloaded after update (prompt + LLM cache cleared)")
     return {"status": "ok", "message": "Settings saved and applied."}
+
+
+# ============================================
+# 图配置端点
+# ============================================
+@app.get("/api/graph-config")
+async def get_graph_config():
+    """获取当前图配置。"""
+    from engine.config_loader import load_graph_config
+    config = load_graph_config()
+    graph = config.get("graph", {})
+    nodes = graph.get("nodes", {})
+    settings_cfg = graph.get("settings", {})
+
+    return {
+        # Agent 节点
+        "agent_max_iterations": nodes.get("agent", {}).get("max_iterations", 50),
+        # Planner 节点
+        "planner_enabled": nodes.get("planner", {}).get("enabled", True),
+        # Approval 节点
+        "approval_enabled": nodes.get("approval", {}).get("enabled", False),
+        # Executor 节点
+        "executor_max_iterations": nodes.get("executor", {}).get("max_iterations", 30),
+        "executor_max_steps": nodes.get("executor", {}).get("max_steps", 8),
+        # Replanner 节点
+        "replanner_enabled": nodes.get("replanner", {}).get("enabled", True),
+        "replanner_skip_on_success": nodes.get("replanner", {}).get("skip_on_success", True),
+        # Summarizer 节点
+        "summarizer_enabled": nodes.get("summarizer", {}).get("enabled", True),
+        # 全局设置
+        "recursion_limit": settings_cfg.get("recursion_limit", 100),
+    }
+
+
+@app.put("/api/graph-config")
+async def update_graph_config(request: GraphConfigUpdateRequest):
+    """更新图配置。支持部分更新。"""
+    from engine.config_loader import load_graph_config, save_graph_config
+
+    config = load_graph_config()
+    graph = config.setdefault("graph", {})
+    nodes = graph.setdefault("nodes", {})
+    settings_cfg = graph.setdefault("settings", {})
+
+    # Agent 节点
+    if request.agent_max_iterations is not None:
+        nodes.setdefault("agent", {})["max_iterations"] = request.agent_max_iterations
+
+    # Planner 节点
+    if request.planner_enabled is not None:
+        nodes.setdefault("planner", {})["enabled"] = request.planner_enabled
+
+    # Approval 节点
+    if request.approval_enabled is not None:
+        nodes.setdefault("approval", {})["enabled"] = request.approval_enabled
+
+    # Executor 节点
+    if request.executor_max_iterations is not None:
+        nodes.setdefault("executor", {})["max_iterations"] = request.executor_max_iterations
+    if request.executor_max_steps is not None:
+        nodes.setdefault("executor", {})["max_steps"] = request.executor_max_steps
+
+    # Replanner 节点
+    if request.replanner_enabled is not None:
+        nodes.setdefault("replanner", {})["enabled"] = request.replanner_enabled
+    if request.replanner_skip_on_success is not None:
+        nodes.setdefault("replanner", {})["skip_on_success"] = request.replanner_skip_on_success
+
+    # Summarizer 节点
+    if request.summarizer_enabled is not None:
+        nodes.setdefault("summarizer", {})["enabled"] = request.summarizer_enabled
+
+    # 全局设置
+    if request.recursion_limit is not None:
+        settings_cfg["recursion_limit"] = request.recursion_limit
+
+    save_graph_config(config)
+
+    # 清除图缓存，让新配置生效
+    from engine import invalidate_caches
+    invalidate_caches()
+
+    logger.info("Graph config updated")
+    return {"status": "ok", "message": "Graph config saved and applied."}
 
 
 class TestModelRequest(BaseModel):

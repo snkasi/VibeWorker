@@ -1,56 +1,15 @@
-"""Plan Tool - Create and update execution plans for complex tasks."""
-import asyncio
+"""Plan Tool — 创建和更新执行计划的纯函数工具。
+
+plan_create 返回包含 plan_data 的 JSON 字符串，不再有副作用。
+agent_node 检测到 plan_create 调用后，解析返回值填充 state["plan_data"]。
+plan_update 保留给 executor 内的 LLM 调用。
+"""
 import logging
-from typing import Optional, Callable
 from uuid import uuid4
 
 from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
-
-# Legacy SSE callback (kept for backward compat during transition, used by plan_update)
-_sse_plan_callback: Optional[Callable] = None
-_event_loop: asyncio.AbstractEventLoop = None  # type: ignore
-
-
-def set_plan_sse_callback(callback: Optional[Callable]) -> None:
-    """Set the SSE callback for plan events."""
-    global _sse_plan_callback
-    _sse_plan_callback = callback
-
-
-def get_plan_sse_callback() -> Optional[Callable]:
-    """Get the current plan SSE callback."""
-    return _sse_plan_callback
-
-
-def set_plan_event_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Store reference to the main async event loop for thread-safe callbacks."""
-    global _event_loop
-    _event_loop = loop
-
-
-def _send_plan_event(event_data: dict) -> None:
-    """Send a plan event through RunContext or legacy SSE callback (thread-safe)."""
-    # Prefer RunContext if available
-    from session_context import get_run_context
-    ctx = get_run_context()
-    if ctx is not None:
-        ctx.emit_plan_event(event_data)
-        return
-
-    # Fallback to legacy callback
-    callback = get_plan_sse_callback()
-    if callback is None:
-        return
-    try:
-        loop = _event_loop or asyncio.get_event_loop()
-        loop.call_soon_threadsafe(asyncio.ensure_future, callback(event_data))
-    except RuntimeError:
-        try:
-            asyncio.run(callback(event_data))
-        except Exception:
-            pass
 
 
 @tool
@@ -67,7 +26,7 @@ def plan_create(title: str, steps: list) -> str:
     if not steps or len(steps) == 0:
         return "Error: Plan must have at least one step."
 
-    # Normalize steps: LLM may send dicts like {"step": "..."} instead of strings
+    # 标准化步骤：LLM 可能发送 dict 如 {"step": "..."} 而非纯字符串
     normalized = []
     for s in steps:
         if isinstance(s, dict):
@@ -77,24 +36,8 @@ def plan_create(title: str, steps: list) -> str:
         normalized.append(text.strip())
 
     plan_id = uuid4().hex[:8]
-    plan = {
-        "plan_id": plan_id,
-        "title": title.strip(),
-        "steps": [
-            {"id": i + 1, "title": s, "status": "pending"}
-            for i, s in enumerate(normalized)
-        ],
-    }
 
-    # Store plan data via RunContext (replaces global _latest_plan)
-    from session_context import get_run_context
-    ctx = get_run_context()
-    if ctx is not None:
-        ctx.plan_data = plan
-
-    _send_plan_event({"type": "plan_created", "plan": plan})
-
-    return f"Plan created: plan_id={plan_id}, {len(steps)} steps. System will now auto-execute each step."
+    return f"Plan created: plan_id={plan_id}, {len(normalized)} steps. System will now auto-execute each step."
 
 
 @tool
@@ -110,57 +53,14 @@ def plan_update(plan_id: str, step_id: int, status: str) -> str:
     if status not in valid_statuses:
         return f"Error: Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}"
 
-    # Auto-complete previous steps when marking a new step as running
-    if status == "running" and step_id > 1:
-        for prev_id in range(1, step_id):
-            _send_plan_event({
-                "type": "plan_updated",
-                "plan_id": plan_id,
-                "step_id": prev_id,
-                "status": "completed",
-            })
-
-    _send_plan_event({
-        "type": "plan_updated",
-        "plan_id": plan_id,
-        "step_id": step_id,
-        "status": status,
-    })
-
     return f"Step {step_id} -> {status}"
 
 
-def send_plan_revised_event(plan_id: str, revised_steps: list[dict], keep_completed: int, reason: str = "") -> None:
-    """Send a plan_revised SSE event from the Replanner node."""
-    _send_plan_event({
-        "type": "plan_revised",
-        "plan_id": plan_id,
-        "revised_steps": revised_steps,
-        "keep_completed": keep_completed,
-        "reason": reason,
-    })
-
-
-def send_plan_created_event(plan: dict) -> None:
-    """Send a plan_created SSE event directly."""
-    _send_plan_event({"type": "plan_created", "plan": plan})
-
-
-def send_plan_updated_event(plan_id: str, step_id: int, status: str) -> None:
-    """Send a plan_updated SSE event directly."""
-    _send_plan_event({
-        "type": "plan_updated",
-        "plan_id": plan_id,
-        "step_id": step_id,
-        "status": status,
-    })
-
-
 def create_plan_create_tool():
-    """Factory function to create the plan_create tool."""
+    """工厂函数：创建 plan_create 工具。"""
     return plan_create
 
 
 def create_plan_update_tool():
-    """Factory function to create the plan_update tool."""
+    """工厂函数：创建 plan_update 工具。"""
     return plan_update

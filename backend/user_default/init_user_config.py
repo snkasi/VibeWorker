@@ -51,12 +51,12 @@ MCP_ENABLED=true
 MCP_TOOL_CACHE_TTL=3600
 
 # ============================================
-# Plan Configuration
+# Plan Configuration (已迁移)
 # ============================================
+# 计划相关设置已迁移到用户数据目录的 graph_config.yaml
+# 可通过前端设置页面的"任务"Tab 修改
+# 此处保留 PLAN_ENABLED 仅为向后兼容
 PLAN_ENABLED=true
-PLAN_REVISION_ENABLED=true
-PLAN_REQUIRE_APPROVAL=false
-PLAN_MAX_STEPS=8
 
 # ============================================
 # Security Configuration
@@ -317,6 +317,40 @@ DEFAULT_KNOWLEDGE_README = """\
 3. Agent 将通过 `search_knowledge_base` 工具检索这些文档
 """
 
+DEFAULT_GRAPH_CONFIG = """\
+# VibeWorker Agent 图配置
+# 修改此文件可控制 Agent 流转逻辑，无需改代码
+
+graph:
+  nodes:
+    agent:
+      enabled: true           # 始终启用（入口节点）
+      max_iterations: 50      # ReAct 循环最大次数
+      tools: ["all"]          # "all" | "core" | "mcp" | 具体工具名列表
+
+    planner:
+      enabled: true           # false = 完全禁用计划功能
+
+    approval:
+      enabled: false          # true = 计划执行前需要人工审批
+
+    executor:
+      enabled: true
+      max_iterations: 30      # 每个步骤的 ReAct 最大次数
+      max_steps: 8            # 计划最大步骤数
+      tools: ["core", "mcp"]  # executor 工具集（默认无 plan_create）
+
+    replanner:
+      enabled: true           # false = 禁用重规划，步骤顺序执行到底
+      skip_on_success: true   # 最后一步成功时跳过 LLM 评估
+
+    summarizer:
+      enabled: true           # false = 计划完成后直接结束，不回到 agent
+
+  settings:
+    recursion_limit: 100      # LangGraph 全局递归限制
+"""
+
 # ============================================================
 # 需要创建的目录列表（相对于 data_dir）
 # ============================================================
@@ -347,6 +381,7 @@ _DEFAULT_FILES = [
     ("memory/MEMORY.md", DEFAULT_MEMORY_MD),
     ("knowledge/README.md", DEFAULT_KNOWLEDGE_README),
     ("mcp_servers.json", DEFAULT_MCP_SERVERS),
+    ("graph_config.yaml", DEFAULT_GRAPH_CONFIG),
 ]
 
 

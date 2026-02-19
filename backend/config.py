@@ -143,11 +143,8 @@ class Settings(BaseSettings):
     security_docker_enabled: bool = Field(default=False)
     security_docker_network: str = Field(default="none")
 
-    # Plan Configuration
-    plan_enabled: bool = Field(default=True)  # Whether plan_create tool is available
-    plan_revision_enabled: bool = Field(default=True)
-    plan_require_approval: bool = Field(default=False)
-    plan_max_steps: int = Field(default=8)
+    # Plan Configuration（已迁移到 engine/graph_config.yaml，此处保留兼容字段）
+    plan_enabled: bool = Field(default=True)  # 兼容旧配置，实际由 graph_config.yaml 控制
 
     # Claude Code Skills compatibility
     claude_code_skills_dir: Optional[Path] = None

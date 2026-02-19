@@ -1,12 +1,13 @@
-"""流适配器 — 统一的 LangGraph 事件循环。
+"""流适配器 — 统一的 StateGraph 事件循环。
 
-将 LangGraph astream_events 翻译为标准化的 AgentEvent dict。
-这是处理 LangGraph 原始事件的唯一位置。
-Phase 1 (DirectMode) 和 Phase 2 (PlanMode) 均调用此函数。
+将 StateGraph astream_events 翻译为标准化的 AgentEvent dict。
+同时从节点输出中提取 pending_events 侧通道事件。
 """
 import logging
 import time
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Union
+
+from langgraph.types import Command
 
 from engine import events
 
@@ -35,34 +36,44 @@ def _format_debug_input(system_prompt: str, messages_str: str, instruction: str 
     return "\n\n".join(parts)
 
 
-async def stream_agent_events(
-    agent,
-    input_state: dict,
+# 节点到 motivation 的映射
+_NODE_MOTIVATIONS = {
+    "agent": "调用大模型进行推理",
+    "executor": "执行计划步骤",
+    "replanner": "评估是否需要调整计划",
+    "summarizer": "生成计划执行总结",
+}
+
+
+async def stream_graph_events(
+    graph,
+    input_data: Union[dict, Command],
     config: dict,
     *,
     system_prompt: str = "",
-    node_label: Optional[str] = None,
-    motivation: Optional[str] = None,
-    instruction: Optional[str] = None,
 ) -> AsyncGenerator[dict, None]:
-    """LangGraph astream_events → 标准化 AgentEvent dict 流。
+    """StateGraph astream_events → 标准化 AgentEvent dict 流。
 
-    DirectMode 和 PlanMode 共享的唯一事件循环。
+    处理 5 类标准事件 + pending_events 侧通道：
+    - on_chat_model_stream → TOKEN 事件
+    - on_chat_model_start → LLM_START 事件
+    - on_chat_model_end → LLM_END 事件
+    - on_tool_start → TOOL_START 事件
+    - on_tool_end → TOOL_END 事件
+    - on_chain_end → 提取 pending_events（plan 侧通道事件）
 
     Args:
-        agent: LangGraph agent（由 create_react_agent 创建）
-        input_state: {"messages": [...]}
-        config: {"recursion_limit": N}
+        graph: 编译后的 StateGraph
+        input_data: 初始状态 dict 或 Command（resume 场景）
+        config: 运行配置（含 thread_id 等）
         system_prompt: 用于调试输入格式化
-        node_label: 覆盖 langgraph_node（PlanMode 使用 "executor"）
-        motivation: 覆盖 llm_start 动机描述
-        instruction: PlanMode executor_prompt（用于调试显示）
     """
     from model_pool import resolve_model
 
     debug_tracking = {}
+    seen_event_count = 0  # pending_events 消费计数器
 
-    async for event in agent.astream_events(input_state, version="v2", config=config):
+    async for event in graph.astream_events(input_data, version="v2", config=config):
         kind = event.get("event", "")
         metadata = event.get("metadata", {})
 
@@ -73,17 +84,17 @@ async def stream_agent_events(
 
         elif kind == "on_chat_model_start":
             run_id = event.get("run_id", "")
-            node = node_label or metadata.get("langgraph_node", "")
-            input_data = (event.get("data") or {}).get("input", {})
-            input_messages = _serialize_debug_messages(input_data)
-            full_input = _format_debug_input(system_prompt, input_messages, instruction)
+            node = metadata.get("langgraph_node", "")
+            input_data_msg = (event.get("data") or {}).get("input", {})
+            input_messages = _serialize_debug_messages(input_data_msg)
+            full_input = _format_debug_input(system_prompt, input_messages)
             debug_tracking[run_id] = {
                 "start_time": time.time(),
                 "node": node,
                 "input": full_input,
             }
 
-            mot = motivation or {"agent": "调用大模型进行推理"}.get(node, "调用大模型处理请求")
+            mot = _NODE_MOTIVATIONS.get(node, "调用大模型处理请求")
             model_name = resolve_model("llm").get("model", "unknown")
             yield events.build_llm_start(run_id[:12], node, model_name, full_input[:5000], mot)
 
@@ -103,3 +114,16 @@ async def stream_agent_events(
             tracked = debug_tracking.pop(f"tool_{run_id}", None)
             duration_ms = int((time.time() - tracked["start_time"]) * 1000) if tracked else None
             yield events.build_tool_end_from_raw(event, duration_ms)
+
+        elif kind == "on_chain_end":
+            # 从节点输出中提取 pending_events
+            output = (event.get("data") or {}).get("output", {})
+            if isinstance(output, dict):
+                pending = output.get("pending_events", [])
+                if isinstance(pending, list):
+                    # 只 yield 新增的事件
+                    new_events = pending[seen_event_count:]
+                    for pe in new_events:
+                        if isinstance(pe, dict) and "type" in pe:
+                            yield pe
+                    seen_event_count = len(pending)
