@@ -605,7 +605,7 @@ export default function SettingsDialog() {
                         </TabsList>
 
                         {/* General Tab */}
-                        <TabsContent value="general" className="space-y-4 mt-0">
+                        <TabsContent value="general" className="space-y-4 mt-0 max-h-[60vh] overflow-y-auto pr-1">
                             <div className="space-y-1.5">
                                 <label className="text-xs font-medium text-muted-foreground">主题</label>
                                 <div className="grid grid-cols-2 gap-2">
@@ -678,7 +678,7 @@ export default function SettingsDialog() {
                         </TabsContent>
 
                         {/* Model Tab — Model Pool */}
-                        <TabsContent value="model" className="mt-0">
+                        <TabsContent value="model" className="mt-0 max-h-[60vh] overflow-y-auto pr-1">
                             <ModelPoolTab />
                             {/* Global Parameters */}
                             <div className="space-y-2 mt-4 pt-3 border-t border-border">
@@ -701,7 +701,7 @@ export default function SettingsDialog() {
                         </TabsContent>
 
                         {/* Memory Tab */}
-                        <TabsContent value="memory" className="space-y-3 mt-0">
+                        <TabsContent value="memory" className="space-y-3 mt-0 max-h-[60vh] overflow-y-auto pr-1">
                             <p className="text-xs text-muted-foreground mb-3">
                                 配置记忆系统行为，包括自动提取和日志注入
                             </p>
@@ -732,7 +732,7 @@ export default function SettingsDialog() {
                             />
                         </TabsContent>
 
-                        <TabsContent value="task" className="space-y-3 mt-0">
+                        <TabsContent value="task" className="space-y-3 mt-0 max-h-[60vh] overflow-y-auto pr-1">
                             <p className="text-xs text-muted-foreground mb-3">
                                 配置 Agent 任务规划行为
                             </p>
@@ -817,7 +817,7 @@ export default function SettingsDialog() {
                         </TabsContent>
 
                         {/* Cache Tab */}
-                        <TabsContent value="cache" className="space-y-3 mt-0">
+                        <TabsContent value="cache" className="space-y-3 mt-0 max-h-[60vh] overflow-y-auto pr-1">
                             <p className="text-xs text-muted-foreground mb-3">
                                 控制各类缓存的开关，关闭后该类型不再写入新缓存
                             </p>
@@ -854,7 +854,7 @@ export default function SettingsDialog() {
                         </TabsContent>
 
                         {/* Security Tab */}
-                        <TabsContent value="security" className="space-y-3 mt-0">
+                        <TabsContent value="security" className="space-y-3 mt-0 max-h-[60vh] overflow-y-auto pr-1">
                             {/* Master Switch */}
                             <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
                                 <div className="flex items-center gap-2">
