@@ -417,12 +417,17 @@ export async function testModelConnection(params: {
 // ============================================
 export async function sendApproval(
   requestId: string,
-  approved: boolean
+  approved: boolean,
+  feedback?: string
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ request_id: requestId, approved }),
+    body: JSON.stringify({
+      request_id: requestId,
+      approved,
+      feedback: feedback || null,
+    }),
   });
   if (!res.ok) {
     const err = await res.json();

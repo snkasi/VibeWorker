@@ -34,6 +34,7 @@ class PendingApproval:
     risk_level: RiskLevel
     event: asyncio.Event = field(default_factory=asyncio.Event)
     approved: Optional[bool] = None
+    feedback: Optional[str] = None  # 用户提供的反馈/指示，将注入给 LLM
     timeout: float = 60.0
     created_at: float = field(default_factory=time.time)
 
@@ -75,11 +76,12 @@ class SecurityGate:
 
     async def check_permission(
         self, tool_name: str, tool_input: dict
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, Optional[str]]:
         """Check if a tool call is allowed to execute.
 
         Returns:
-            (allowed, reason) - True if allowed, reason explains decision.
+            (allowed, reason, feedback) - True if allowed, reason explains decision,
+            feedback is optional user instruction to inject into LLM context.
         """
         # Check rate limit first (if enabled)
         try:
@@ -95,7 +97,7 @@ class SecurityGate:
                             risk_level="rate_limited",
                             action="rate_limited",
                         )
-                    return False, rl_reason
+                    return False, rl_reason, None
         except Exception:
             pass
 
@@ -114,7 +116,7 @@ class SecurityGate:
                     risk_level=risk_level.value,
                     action="blocked",
                 )
-            return False, f"Operation blocked: dangerous {tool_name} operation detected"
+            return False, f"Operation blocked: dangerous {tool_name} operation detected", None
 
         # Determine if we need approval
         needs_approval = self._needs_approval(policy, risk_level)
@@ -128,7 +130,7 @@ class SecurityGate:
                     risk_level=risk_level.value,
                     action="auto_allowed",
                 )
-            return True, "auto_allowed"
+            return True, "auto_allowed", None
 
         # Need user approval - create pending request
         return await self._request_approval(tool_name, tool_input, risk_level)
@@ -167,8 +169,12 @@ class SecurityGate:
 
     async def _request_approval(
         self, tool_name: str, tool_input: dict, risk_level: RiskLevel
-    ) -> tuple[bool, str]:
-        """Send approval request via SSE and wait for user response."""
+    ) -> tuple[bool, str, Optional[str]]:
+        """Send approval request via SSE and wait for user response.
+
+        Returns:
+            (allowed, reason, feedback) - feedback 是用户提供的指示，将注入给 LLM
+        """
         request_id = str(uuid.uuid4())[:8]
         pending = PendingApproval(
             request_id=request_id,
@@ -193,7 +199,7 @@ class SecurityGate:
                 logger.error(f"Failed to send approval request via SSE: {e}")
                 # If we can't reach the frontend, deny by default
                 self._cleanup_pending(request_id)
-                return False, "Failed to reach frontend for approval"
+                return False, "Failed to reach frontend for approval", None
 
         # Wait for approval with timeout
         try:
@@ -212,10 +218,11 @@ class SecurityGate:
                     action="timeout",
                     request_id=request_id,
                 )
-            return False, f"Approval timed out after {self._approval_timeout}s - auto-denied"
+            return False, f"Approval timed out after {self._approval_timeout}s - auto-denied", None
 
         # Check result
         approved = pending.approved
+        feedback = pending.feedback
         self._cleanup_pending(request_id)
 
         if approved:
@@ -226,8 +233,9 @@ class SecurityGate:
                     risk_level=risk_level.value,
                     action="approved",
                     request_id=request_id,
+                    feedback=feedback,
                 )
-            return True, "user_approved"
+            return True, "user_approved", feedback
         else:
             if self._audit_enabled:
                 audit_logger.log(
@@ -237,10 +245,15 @@ class SecurityGate:
                     action="denied",
                     request_id=request_id,
                 )
-            return False, "User denied the operation"
+            return False, "User denied the operation", None
 
-    def resolve_approval(self, request_id: str, approved: bool) -> bool:
+    def resolve_approval(self, request_id: str, approved: bool, feedback: Optional[str] = None) -> bool:
         """Resolve a pending approval request.
+
+        Args:
+            request_id: 请求 ID
+            approved: 是否批准
+            feedback: 用户提供的反馈/指示，将注入给 LLM
 
         Returns True if the request was found and resolved.
         """
@@ -250,6 +263,7 @@ class SecurityGate:
             return False
 
         pending.approved = approved
+        pending.feedback = feedback.strip() if feedback else None
         pending.event.set()
         return True
 

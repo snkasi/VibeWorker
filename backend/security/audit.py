@@ -28,6 +28,7 @@ class AuditLogger:
         request_id: Optional[str] = None,
         execution_time_ms: Optional[float] = None,
         error: Optional[str] = None,
+        feedback: Optional[str] = None,  # 用户审批时提供的指示
     ) -> None:
         """Write an audit entry."""
         entry = {
@@ -43,6 +44,8 @@ class AuditLogger:
             entry["exec_ms"] = round(execution_time_ms, 1)
         if error:
             entry["error"] = error[:500]
+        if feedback:
+            entry["feedback"] = feedback[:500]
 
         try:
             with open(self._log_path, "a", encoding="utf-8") as f:

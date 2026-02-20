@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Shield, ShieldAlert, ShieldCheck, ShieldX, Timer } from "lucide-react";
+import { Shield, ShieldAlert, ShieldCheck, ShieldX, Timer, MessageSquare, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -63,11 +63,16 @@ export default function ApprovalDialog({
 }: ApprovalDialogProps) {
     const [remaining, setRemaining] = useState(timeout);
     const [sending, setSending] = useState(false);
+    // 用户反馈/指示（可选）
+    const [feedback, setFeedback] = useState("");
+    const [showFeedback, setShowFeedback] = useState(false);
 
-    // Reset timer when new request comes in
+    // Reset timer and feedback when new request comes in
     useEffect(() => {
         if (!request) return;
         setRemaining(timeout);
+        setFeedback("");
+        setShowFeedback(false);
         const interval = setInterval(() => {
             setRemaining((prev) => {
                 if (prev <= 1) {
@@ -88,7 +93,9 @@ export default function ApprovalDialog({
             if (!request || sending) return;
             setSending(true);
             try {
-                await sendApproval(request.request_id, approved);
+                // 只在批准时发送 feedback
+                const userFeedback = approved && feedback.trim() ? feedback.trim() : undefined;
+                await sendApproval(request.request_id, approved, userFeedback);
                 // If user chose "allow for session", add tool to allowed list
                 if (approved && allowForSession && onAllowForSession) {
                     onAllowForSession(request.tool);
@@ -101,7 +108,7 @@ export default function ApprovalDialog({
                 onResolved();
             }
         },
-        [request, sending, onResolved, onAllowForSession]
+        [request, sending, onResolved, onAllowForSession, feedback]
     );
 
     if (!request) return null;
@@ -161,6 +168,36 @@ export default function ApprovalDialog({
                                 style={{ width: `${timerPercent}%` }}
                             />
                         </div>
+                    </div>
+
+                    {/* 可选的用户反馈/指示 */}
+                    <div className="border-t border-border/50 pt-3">
+                        <button
+                            type="button"
+                            onClick={() => setShowFeedback(!showFeedback)}
+                            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                            {showFeedback ? (
+                                <ChevronDown className="w-3 h-3" />
+                            ) : (
+                                <ChevronRight className="w-3 h-3" />
+                            )}
+                            <MessageSquare className="w-3 h-3" />
+                            <span>添加指示（可选）</span>
+                        </button>
+                        {showFeedback && (
+                            <div className="mt-2 animate-in slide-in-from-top-2 duration-200">
+                                <textarea
+                                    value={feedback}
+                                    onChange={(e) => setFeedback(e.target.value)}
+                                    placeholder="输入给 AI 的指示，例如：&#10;• 执行后只显示前 10 条结果&#10;• 如果出错，不要重试&#10;• 用中文总结输出内容"
+                                    className="w-full h-20 px-3 py-2 text-xs rounded-lg border border-border bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                                />
+                                <p className="mt-1 text-[10px] text-muted-foreground/60">
+                                    这些指示会在工具执行后注入，AI 将在后续处理时遵循
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
 

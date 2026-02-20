@@ -473,14 +473,23 @@ async def approve_plan(request: PlanApprovalRequest):
 class ApprovalRequest(BaseModel):
     request_id: str
     approved: bool
+    feedback: Optional[str] = None  # 用户可选的反馈/指示，将注入给 LLM
 
 
 @app.post("/api/approve")
 async def approve_tool(request: ApprovalRequest):
-    """Approve or deny a pending tool execution request."""
+    """Approve or deny a pending tool execution request.
+
+    用户可以提供可选的 feedback，这些指示会注入到工具执行结果中，
+    让 LLM 在后续处理时遵循用户的要求。
+    """
     try:
         from security import security_gate
-        resolved = security_gate.resolve_approval(request.request_id, request.approved)
+        resolved = security_gate.resolve_approval(
+            request.request_id,
+            request.approved,
+            feedback=request.feedback
+        )
         if resolved:
             return {"status": "ok", "request_id": request.request_id, "approved": request.approved}
         else:

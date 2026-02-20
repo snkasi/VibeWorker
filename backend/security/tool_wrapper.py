@@ -34,8 +34,8 @@ def create_secured_tool(original_tool: BaseTool) -> BaseTool:
         """Secured async wrapper around the tool."""
         start = time.time()
 
-        # Check permission
-        allowed, reason = await security_gate.check_permission(tool_name, kwargs)
+        # Check permission（返回 allowed, reason, feedback）
+        allowed, reason, feedback = await security_gate.check_permission(tool_name, kwargs)
 
         if not allowed:
             logger.info(f"Tool {tool_name} blocked: {reason}")
@@ -59,6 +59,12 @@ def create_secured_tool(original_tool: BaseTool) -> BaseTool:
                     action="executed",
                     execution_time_ms=elapsed,
                 )
+
+            # 如果用户提供了反馈/指示，注入到结果中让 LLM 看到
+            if feedback:
+                result = f"[用户指示] {feedback}\n\n{result}"
+                logger.info(f"Tool {tool_name} 注入用户反馈: {feedback[:50]}...")
+
             return result
         except Exception as e:
             elapsed = (time.time() - start) * 1000
