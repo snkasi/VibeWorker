@@ -1,12 +1,11 @@
 """Terminal Tool - Execute shell commands with security classification."""
 import logging
 import subprocess
-from pathlib import Path
 from typing import Optional
 
 from langchain_core.tools import tool
 from config import PROJECT_ROOT, settings
-from session_context import get_session_tmp_dir, get_session_id
+from session_context import get_current_session_id, get_tmp_dir_for_session
 from security.classifier import classify_terminal_command, RiskLevel
 
 logger = logging.getLogger(__name__)
@@ -115,8 +114,11 @@ def terminal(command: str, timeout: Optional[int] = 30) -> str:
         pass  # Fall through to local execution
 
     try:
-        cwd = str(get_session_tmp_dir())
-        logger.info(f"terminal cwd={cwd} session_id={get_session_id()!r}")
+        # 从 session_context 获取 session_id（由 security wrapper 设置）
+        session_id = get_current_session_id()
+        cwd = str(get_tmp_dir_for_session(session_id))
+        logger.info(f"terminal cwd={cwd} session_id={session_id!r}")
+
         result = subprocess.run(
             command,
             shell=True,

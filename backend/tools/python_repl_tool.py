@@ -5,6 +5,10 @@ Security layers:
 2. Restricted builtins (remove __import__, exec, eval, compile)
 3. Import interception (block dangerous modules)
 4. Execution timeout (30s via ThreadPoolExecutor, Windows-compatible)
+
+Session Context:
+- 使用 session_context.get_current_session_id() 获取会话 ID
+- 使用 run_in_session_context() 在 ThreadPoolExecutor 中传播上下文
 """
 import os
 import sys
@@ -57,13 +61,22 @@ def _make_restricted_builtins():
 
 
 def _chdir_to_session_tmp():
-    """Change cwd to session temp directory and return the old cwd."""
+    """Change cwd to session temp directory and return the old cwd.
+
+    从 session_context 获取 session_id（由 security wrapper 设置，
+    通过 run_in_session_context 传播到此线程）。
+    """
     import logging
-    from session_context import get_session_tmp_dir, get_session_id
+    from session_context import get_current_session_id, get_tmp_dir_for_session
+
     _logger = logging.getLogger(__name__)
+
+    # 从 contextvars 获取 session_id（由 run_in_session_context 传播）
+    session_id = get_current_session_id()
+
     old_cwd = os.getcwd()
-    tmp_dir = str(get_session_tmp_dir())
-    _logger.info(f"python_repl cwd={tmp_dir} session_id={get_session_id()!r}")
+    tmp_dir = str(get_tmp_dir_for_session(session_id))
+    _logger.info(f"python_repl cwd={tmp_dir} session_id={session_id!r}")
     os.chdir(tmp_dir)
     return old_cwd
 
@@ -159,6 +172,9 @@ def python_repl(code: str) -> str:
     Returns:
         The output of the code execution (stdout) or error message.
     """
+    # 导入 create_context_carrier 用于跨线程传播 session context
+    from session_context import create_context_carrier
+
     # Check if Python sandbox is enabled
     try:
         from config import settings
@@ -184,12 +200,16 @@ def python_repl(code: str) -> str:
         pass  # Fall through to local execution
 
     # Phase 3: Execute with restricted builtins + timeout (or unrestricted if sandbox off)
+    # 使用 create_context_carrier 在主线程捕获上下文，然后在线程池中传播
     executor = ThreadPoolExecutor(max_workers=1)
     try:
         if sandbox_on:
-            future = executor.submit(_execute_code, code)
+            # 在主线程创建 carrier（此时捕获 session context）
+            execute_with_context = create_context_carrier(_execute_code)
+            future = executor.submit(execute_with_context, code)
         else:
-            future = executor.submit(_execute_code_unrestricted, code)
+            execute_with_context = create_context_carrier(_execute_code_unrestricted)
+            future = executor.submit(execute_with_context, code)
         result = future.result(timeout=EXEC_TIMEOUT)
         return result
     except FuturesTimeoutError:

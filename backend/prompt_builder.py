@@ -142,13 +142,17 @@ def build_system_prompt() -> str:
     if agents:
         parts.append(f"<!-- AGENTS -->\n{agents}")
 
-    # 5.5 Workspace Info
+    # 5.5 Workspace Info（包含动态占位符 {{SESSION_ID}} 和 {{WORKING_DIR}}，由 runner 替换）
     data_path = settings.get_data_path()
     parts.append(
         f"<!-- WORKSPACE_INFO -->\n"
-        f"## 环境路径\n"
+        f"## 环境信息\n"
+        f"- **当前会话 ID**: `{{{{SESSION_ID}}}}`\n"
+        f"- **工作目录**: `{{{{WORKING_DIR}}}}`\n"
+        f"  - 所有工具（terminal、python_repl）的当前工作目录\n"
+        f"  - 下载的文件、生成的文件都保存在这里\n"
+        f"  - 向用户提供文件时，请给出完整路径\n"
         f"- **用户数据目录**: `{data_path}`\n"
-        f"- **工作目录** (cwd): `{data_path}/tmp/{{session_id}}/`（每个会话独立的临时目录）\n"
         f"- **项目源码**（只读）: `{PROJECT_ROOT}`"
     )
 

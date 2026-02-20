@@ -128,6 +128,13 @@ async def _run_uncached(message, session_history, ctx, mws):
     # 注意：历史消息由 LangGraph checkpointer 管理，这里只发送新消息
     # SystemMessage 使用固定 ID，确保 add_messages reducer 正确替换而非追加
     system_prompt = build_system_prompt()
+
+    # 替换动态占位符（session_id 和工作目录）
+    from session_context import get_tmp_dir_for_session
+    working_dir = str(get_tmp_dir_for_session(sid))
+    system_prompt = system_prompt.replace("{{SESSION_ID}}", sid)
+    system_prompt = system_prompt.replace("{{WORKING_DIR}}", working_dir)
+
     messages = [
         SystemMessage(content=system_prompt, id="system-prompt"),
         HumanMessage(content=message),
