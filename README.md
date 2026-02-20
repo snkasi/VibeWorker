@@ -1,4 +1,4 @@
-# VibeWorker
+# VibeWorker 超级数字员工
 
 <p align="center">
   <strong>Your Local AI Digital Worker with Real Memory</strong>
