@@ -61,8 +61,15 @@ class InMemoryCollector:
             "input_tokens": None,
             "output_tokens": None,
             "total_tokens": None,
+            "tokens_estimated": None,
             "input": event.get("input", ""),
             "output": "",
+            # 成本相关字段（在 llm_end 时填充）
+            "input_cost": None,
+            "output_cost": None,
+            "total_cost": None,
+            "cost_estimated": None,
+            "model_info": None,
             "timestamp": datetime.now().isoformat(),
             "_inProgress": True,
             "motivation": event.get("motivation", ""),
@@ -79,7 +86,14 @@ class InMemoryCollector:
                     "input_tokens": event.get("input_tokens"),
                     "output_tokens": event.get("output_tokens"),
                     "total_tokens": event.get("total_tokens"),
+                    "tokens_estimated": event.get("tokens_estimated"),
                     "output": event.get("output", ""),
+                    # 成本相关字段（基于 OpenRouter 定价）
+                    "input_cost": event.get("input_cost"),
+                    "output_cost": event.get("output_cost"),
+                    "total_cost": event.get("total_cost"),
+                    "cost_estimated": event.get("cost_estimated"),
+                    "model_info": event.get("model_info"),
                     "_inProgress": False,
                 }
                 break
