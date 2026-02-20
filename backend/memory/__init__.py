@@ -34,6 +34,18 @@ from memory.reflector import (
     detect_user_correction,
     process_user_correction,
 )
+from memory.reflection_strategies import (
+    HookEvent,
+    HookContext,
+    ToolCallRecord,
+    ReflectionStrategy,
+    ToolFailureStrategy,
+    RepeatedToolStrategy,
+)
+from memory.reflection_dispatcher import (
+    ReflectionDispatcher,
+    reflection_dispatcher,
+)
 
 __all__ = [
     "memory_manager",
@@ -50,4 +62,13 @@ __all__ = [
     "record_tool_failure",
     "detect_user_correction",
     "process_user_correction",
+    # 反思策略框架
+    "HookEvent",
+    "HookContext",
+    "ToolCallRecord",
+    "ReflectionStrategy",
+    "ToolFailureStrategy",
+    "RepeatedToolStrategy",
+    "ReflectionDispatcher",
+    "reflection_dispatcher",
 ]

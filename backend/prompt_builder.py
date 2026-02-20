@@ -156,34 +156,35 @@ def build_system_prompt() -> str:
         f"- **项目源码**（只读）: `{PROJECT_ROOT}`"
     )
 
-    # 6. Memory (memory.json) + Daily Logs (with token budget)
-    memory_parts = []
+    # 6. Memory — 统一记忆区块（memory.json + Daily Logs）
+    # 所有记忆内容合并在一个 <!-- MEMORY --> 标签下，
+    # 隐式召回在 runner.py 中按需追加到此区块末尾
     memory_budget = settings.memory_max_prompt_tokens * 4  # ~4 chars per token estimate
+    memory_sections: list[str] = []
 
-    # 长期记忆（memory.json）
+    # 长期记忆（memory.json：含用户偏好、事实、程序经验等所有分类）
     try:
         from memory.manager import memory_manager
         memory_content = memory_manager.read_memory()
         if memory_content:
-            memory_parts.append(f"<!-- MEMORY -->\n{memory_content}")
+            memory_sections.append(memory_content)
     except Exception as e:
         logger.warning(f"加载 memory.json 失败: {e}")
 
-    # Daily Logs (today + yesterday, truncated if over budget)
+    # 每日日志
     try:
         from memory.manager import memory_manager
         daily_context = memory_manager.get_daily_context()
         if daily_context:
-            memory_parts.append(f"<!-- DAILY_LOGS -->\n{daily_context}")
+            memory_sections.append(f"## 每日日志\n{daily_context}")
     except Exception as e:
-        logger.warning(f"Failed to load daily logs: {e}")
+        logger.warning(f"加载每日日志失败: {e}")
 
-    # Apply memory token budget: truncate from oldest content
-    memory_combined = "\n\n".join(memory_parts)
-    if len(memory_combined) > memory_budget:
-        memory_combined = memory_combined[:memory_budget] + "\n\n...[memory truncated]"
-
-    if memory_combined:
+    # 合并并应用 token 预算
+    if memory_sections:
+        memory_combined = "<!-- MEMORY -->\n" + "\n\n".join(memory_sections)
+        if len(memory_combined) > memory_budget:
+            memory_combined = memory_combined[:memory_budget] + "\n\n...[memory truncated]"
         parts.append(memory_combined)
 
     full_prompt = "\n\n---\n\n".join(parts)
@@ -202,13 +203,14 @@ def build_system_prompt() -> str:
 def build_implicit_recall_context(user_message: str) -> str:
     """基于用户首条消息构建隐式召回上下文
 
-    在对话开始时自动检索相关记忆 + 程序性记忆，注入到 System Prompt。
+    在对话开始时自动检索相关记忆，注入到 <!-- MEMORY --> 区块末尾。
+    不包含 procedural 记忆（程序经验已在 read_memory() 中输出，避免重复）。
 
     Args:
         user_message: 用户的首条消息
 
     Returns:
-        隐式召回的上下文字符串，可追加到 System Prompt
+        隐式召回的 ## 子区块字符串，由 runner.py 追加到 MEMORY 区块内
     """
     if not user_message or not user_message.strip():
         return ""
@@ -217,78 +219,31 @@ def build_implicit_recall_context(user_message: str) -> str:
         from memory.search import get_implicit_recall
 
         top_k = settings.memory_implicit_recall_top_k
+        # 不包含 procedural，因为程序经验已在 read_memory() 的 "## 程序经验" 中展示
         results = get_implicit_recall(
             query=user_message,
             top_k=top_k,
-            include_procedural=True,
+            include_procedural=False,
         )
 
         if not results:
             return ""
 
-        parts = ["<!-- IMPLICIT_RECALL -->\n## 相关记忆（自动召回）\n"]
+        # 过滤掉可能从语义搜索路径进来的 procedural 条目
+        results = [r for r in results if r.get("category") != "procedural"]
+        if not results:
+            return ""
 
-        # 分离普通记忆和程序性记忆
-        regular = []
-        procedural = []
-        for r in results:
-            if r.get("category") == "procedural":
-                procedural.append(r)
-            else:
-                regular.append(r)
-
-        # 普通记忆
-        if regular:
-            for r in regular[:3]:
-                content = r.get("content", "")[:200]
-                cat = r.get("category", "")
-                salience = r.get("salience", 0.5)
-                star = "⭐ " if salience >= 0.8 else ""
-                parts.append(f"- {star}[{cat}] {content}")
-
-        # 程序性记忆（工具使用注意事项）
-        if procedural:
-            parts.append("\n### 工具使用注意事项（来自历史经验）\n")
-            for r in procedural[:3]:
-                content = r.get("content", "")[:200]
-                parts.append(f"- {content}")
+        parts = ["## 相关记忆（自动召回）\n"]
+        for r in results[:top_k]:
+            content = r.get("content", "")[:200]
+            cat = r.get("category", "")
+            salience = r.get("salience", 0.5)
+            star = "⭐ " if salience >= 0.8 else ""
+            parts.append(f"- {star}[{cat}] {content}")
 
         return "\n".join(parts)
 
     except Exception as e:
         logger.warning(f"Failed to build implicit recall context: {e}")
-        return ""
-
-
-def build_procedural_hints() -> str:
-    """构建程序性记忆提示（工具使用注意事项）
-
-    提取高重要性的 procedural 记忆，用于注入 System Prompt。
-
-    Returns:
-        程序性记忆提示字符串
-    """
-    try:
-        from memory.manager import memory_manager
-
-        procedural = memory_manager.get_procedural_memories()
-        if not procedural:
-            return ""
-
-        # 按 salience 排序，取 top 5
-        procedural.sort(key=lambda x: x.get("salience", 0), reverse=True)
-        top_procedural = procedural[:5]
-
-        if not top_procedural:
-            return ""
-
-        parts = ["<!-- PROCEDURAL_HINTS -->\n## 工具使用注意事项\n"]
-        for p in top_procedural:
-            content = p.get("content", "")[:200]
-            parts.append(f"- {content}")
-
-        return "\n".join(parts)
-
-    except Exception as e:
-        logger.warning(f"Failed to build procedural hints: {e}")
         return ""
