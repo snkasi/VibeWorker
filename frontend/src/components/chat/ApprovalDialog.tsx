@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Shield, ShieldAlert, ShieldCheck, ShieldX, Timer, MessageSquare, ChevronDown, ChevronRight } from "lucide-react";
+import { Shield, ShieldAlert, ShieldCheck, ShieldX, Timer, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -182,20 +182,15 @@ export default function ApprovalDialog({
                             ) : (
                                 <ChevronRight className="w-3 h-3" />
                             )}
-                            <MessageSquare className="w-3 h-3" />
-                            <span>添加指示（可选）</span>
+                            <span>额外指示</span>
                         </button>
                         {showFeedback && (
                             <div className="mt-2 animate-in slide-in-from-top-2 duration-200">
                                 <textarea
                                     value={feedback}
                                     onChange={(e) => setFeedback(e.target.value)}
-                                    placeholder="输入给 AI 的指示，例如：&#10;• 执行后只显示前 10 条结果&#10;• 如果出错，不要重试&#10;• 用中文总结输出内容"
-                                    className="w-full h-20 px-3 py-2 text-xs rounded-lg border border-border bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                                    className="w-full h-16 px-3 py-2 text-xs rounded-lg border border-border bg-background resize-none focus:outline-none focus:ring-2 focus:ring-primary/20"
                                 />
-                                <p className="mt-1 text-[10px] text-muted-foreground/60">
-                                    这些指示会在工具执行后注入，AI 将在后续处理时遵循
-                                </p>
                             </div>
                         )}
                     </div>
