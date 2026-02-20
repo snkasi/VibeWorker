@@ -12,6 +12,7 @@ import { useSessionState, useSessionActions } from "@/lib/sessionStore";
 import type { ThinkingStep } from "@/lib/sessionStore";
 import ApprovalDialog from "./ApprovalDialog";
 import PlanCard from "./PlanCard";
+import Typewriter from "./Typewriter";
 
 /** Custom code renderer with syntax highlighting for ReactMarkdown */
 const markdownCodeComponents = {
@@ -538,15 +539,24 @@ export default function ChatPanel({
                                 {streamingSegments.map((seg, j) => {
                                     if (seg.type === "text") {
                                         return seg.content ? (
-                                            <div key={j} className="chat-message-content text-sm">
-                                                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
-                                                    {seg.content}
-                                                </ReactMarkdown>
-                                                {/* 最后一个文本片段时显示光标 */}
-                                                {j === streamingSegments.length - 1 && (
-                                                    <span className="inline-block w-2 h-4 bg-primary/60 ml-0.5 animate-pulse-soft rounded-sm" />
+                                            <Typewriter
+                                                key={j}
+                                                text={seg.content}
+                                                speed={15}
+                                                isStreaming={isStreaming}
+                                            >
+                                                {(displayText) => (
+                                                    <div className="chat-message-content text-sm">
+                                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
+                                                            {displayText}
+                                                        </ReactMarkdown>
+                                                        {/* 最后一个文本片段时显示光标 */}
+                                                        {j === streamingSegments.length - 1 && (
+                                                            <span className="inline-block w-2 h-4 bg-primary/60 ml-0.5 animate-pulse-soft rounded-sm" />
+                                                        )}
+                                                    </div>
                                                 )}
-                                            </div>
+                                            </Typewriter>
                                         ) : null;
                                     }
                                     // seg.type === "tool"
