@@ -125,10 +125,11 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
             </div>
             {call.total_tokens != null && (
               <div className="text-[10px] text-muted-foreground/50 mt-0.5">
+                {call.tokens_estimated && <span title="估算值（流式输出时 API 不返回 token 信息）">~</span>}
                 {formatTokens(call.total_tokens)} tokens
                 {call.input_tokens != null && call.output_tokens != null && (
                   <span className="text-muted-foreground/40">
-                    {" "}({formatTokens(call.input_tokens)} in / {formatTokens(call.output_tokens)} out)
+                    {" "}({call.tokens_estimated && "~"}{formatTokens(call.input_tokens)} in / {call.tokens_estimated && "~"}{formatTokens(call.output_tokens)} out)
                   </span>
                 )}
               </div>
@@ -232,6 +233,8 @@ function DebugSummary({ calls }: { calls: DebugCall[] }) {
   const llmDuration = llmCalls.reduce((sum, c) => sum + (c.duration_ms || 0), 0);
   const llmTokens = llmCalls.reduce((sum, c) => sum + (c.total_tokens || 0), 0);
   const toolDuration = toolCalls.reduce((sum, c) => sum + (c.duration_ms || 0), 0);
+  // 检查是否有估算的 token
+  const hasEstimated = llmCalls.some(c => c.tokens_estimated);
 
   if (calls.length === 0) return null;
 
@@ -240,7 +243,7 @@ function DebugSummary({ calls }: { calls: DebugCall[] }) {
       <div className="text-[10px] text-muted-foreground/50 uppercase tracking-wider mb-1">Summary</div>
       {llmCalls.length > 0 && (
         <div className="text-[11px] text-muted-foreground/70">
-          &#x1F916; LLM: {llmCalls.length} calls &middot; {formatDuration(llmDuration)} &middot; {formatTokens(llmTokens)} tokens
+          &#x1F916; LLM: {llmCalls.length} calls &middot; {formatDuration(llmDuration)} &middot; {hasEstimated && <span title="包含估算值">~</span>}{formatTokens(llmTokens)} tokens
         </div>
       )}
       {toolCalls.length > 0 && (

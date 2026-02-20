@@ -80,6 +80,7 @@ export interface DebugLLMCall {
   input_tokens: number | null;
   output_tokens: number | null;
   total_tokens: number | null;
+  tokens_estimated?: boolean;  // 标记 token 是否为估算值（流式输出时 API 通常不返回 token 信息）
   input: string;
   output: string;
   reasoning?: string;     // 推理模型的 <think> 内容

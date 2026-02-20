@@ -10,6 +10,25 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+def estimate_tokens(text: str) -> int:
+    """估算文本的 token 数（经验公式，适用于大多数模型）。
+
+    不同 LLM 的 tokenizer 各不相同，精确计算需要引入对应的库（如 tiktoken）。
+    这里使用经验公式进行粗略估算，误差通常在 20% 以内，足够 debug 参考。
+
+    经验值：
+    - 中文：约 1.5 字符 ≈ 1 token
+    - 英文/符号：约 4 字符 ≈ 1 token
+    """
+    if not text:
+        return 0
+    # 统计中文字符数
+    chinese_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    other_count = len(text) - chinese_count
+    # 中文约 1.5 字符/token，其他约 4 字符/token
+    return int(chinese_count / 1.5 + other_count / 4)
+
 # 事件类型常量
 TOKEN = "token"
 TOOL_START = "tool_start"
@@ -141,8 +160,9 @@ def build_llm_end_from_raw(event: dict, tracked: dict) -> dict:
     output_msg = (event.get("data") or {}).get("output", None)
     duration_ms = int((time.time() - tracked["start_time"]) * 1000)
 
-    # 提取 Token 用量
+    # 提取 Token 用量（优先使用 API 返回的真实值，否则使用估算值）
     tokens = {}
+    tokens_estimated = False
     if output_msg and hasattr(output_msg, "usage_metadata") and output_msg.usage_metadata:
         um = output_msg.usage_metadata
         tokens = {
@@ -204,18 +224,34 @@ def build_llm_end_from_raw(event: dict, tracked: dict) -> dict:
 
     output_text = "\n\n".join(output_parts) if output_parts else "(无内容)"
 
+    # 如果 API 没有返回 token 信息，使用估算值
+    # 流式输出时 usage_metadata 通常为空，因此需要本地估算
+    input_text = tracked["input"]
+    if not tokens.get("total_tokens"):
+        tokens_estimated = True
+        est_input = estimate_tokens(input_text)
+        est_output = estimate_tokens(output_text)
+        tokens = {
+            "input_tokens": est_input,
+            "output_tokens": est_output,
+            "total_tokens": est_input + est_output,
+        }
+
     from model_pool import resolve_model
     model_name = resolve_model("llm").get("model", "unknown")
 
-    return build_llm_end(
+    result = build_llm_end(
         call_id=run_id[:12],
         node=tracked["node"],
         model=model_name,
         duration_ms=duration_ms,
         tokens=tokens,
-        input_text=tracked["input"],
+        input_text=input_text,
         output_text=output_text,
     )
+    # 标记 token 是否为估算值，前端可据此显示不同样式
+    result["tokens_estimated"] = tokens_estimated
+    return result
 
 
 def serialize_sse(event: dict) -> str:
