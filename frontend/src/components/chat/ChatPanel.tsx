@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Send, Square, Sparkles, Zap, ChevronRight, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ReactMarkdown from "react-markdown";
@@ -9,46 +9,100 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { type ToolCall, type MessageSegment } from "@/lib/api";
 import { useSessionState, useSessionActions } from "@/lib/sessionStore";
+import { linkifyText } from "@/lib/linkify";
 import type { ThinkingStep } from "@/lib/sessionStore";
 import ApprovalDialog from "./ApprovalDialog";
 import PlanCard from "./PlanCard";
 import Typewriter from "./Typewriter";
 
-/** Custom code renderer with syntax highlighting for ReactMarkdown */
-const markdownCodeComponents = {
-    code({ className, children, ...props }: React.ComponentPropsWithRef<"code">) {
-        const match = /language-(\w+)/.exec(className || "");
-        const codeString = String(children).replace(/\n$/, "");
-        if (match) {
-            return (
-                <SyntaxHighlighter
-                    style={oneLight}
-                    language={match[1]}
-                    PreTag="div"
-                    customStyle={{
-                        margin: 0,
-                        padding: "0.75rem 1rem",
-                        background: "transparent",
-                        fontSize: "0.7rem",
-                        lineHeight: 1.6,
-                    }}
-                    codeTagProps={{
-                        style: {
-                            fontFamily: "'JetBrains Mono', var(--font-geist-mono), monospace",
-                        },
-                    }}
-                >
-                    {codeString}
-                </SyntaxHighlighter>
-            );
-        }
+/**
+ * 自定义链接组件：支持 URL 和本地文件路径
+ * - 普通 URL：新窗口打开
+ * - file:// 链接：调用 onFileOpen 回调或复制路径
+ */
+function createLinkComponent(onFileOpen?: (path: string) => void) {
+    return function LinkComponent({ href, children, ...props }: React.ComponentPropsWithRef<"a">) {
+        const isFileLink = href?.startsWith("file://");
+
+        const handleClick = (e: React.MouseEvent) => {
+            if (isFileLink && href) {
+                e.preventDefault();
+                // 从 file:// URL 提取本地路径
+                let localPath = href.replace("file://", "");
+                // 处理 Windows 路径：file:///C:/... -> C:/...
+                if (localPath.startsWith("/") && /^\/[A-Za-z]:/.test(localPath)) {
+                    localPath = localPath.slice(1);
+                }
+                // 还原 Windows 风格路径分隔符（可选，保持原样）
+                if (onFileOpen) {
+                    onFileOpen(localPath);
+                } else {
+                    // 没有回调时，复制路径到剪贴板
+                    navigator.clipboard.writeText(localPath).then(() => {
+                        // 可以添加 toast 提示
+                        console.log("路径已复制:", localPath);
+                    });
+                }
+            }
+        };
+
         return (
-            <code className={className} {...props}>
+            <a
+                href={href}
+                onClick={handleClick}
+                target={isFileLink ? undefined : "_blank"}
+                rel={isFileLink ? undefined : "noopener noreferrer"}
+                className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline decoration-blue-400/50 hover:decoration-blue-600 transition-colors cursor-pointer"
+                title={isFileLink ? `点击打开: ${href?.replace("file://", "")}` : href}
+                {...props}
+            >
                 {children}
-            </code>
+            </a>
         );
-    },
-};
+    };
+}
+
+/** Custom code renderer with syntax highlighting for ReactMarkdown */
+function createMarkdownComponents(onFileOpen?: (path: string) => void) {
+    return {
+        code({ className, children, ...props }: React.ComponentPropsWithRef<"code">) {
+            const match = /language-(\w+)/.exec(className || "");
+            const codeString = String(children).replace(/\n$/, "");
+            if (match) {
+                return (
+                    <SyntaxHighlighter
+                        style={oneLight}
+                        language={match[1]}
+                        PreTag="div"
+                        customStyle={{
+                            margin: 0,
+                            padding: "0.75rem 1rem",
+                            background: "transparent",
+                            fontSize: "0.7rem",
+                            lineHeight: 1.6,
+                        }}
+                        codeTagProps={{
+                            style: {
+                                fontFamily: "'JetBrains Mono', var(--font-geist-mono), monospace",
+                            },
+                        }}
+                    >
+                        {codeString}
+                    </SyntaxHighlighter>
+                );
+            }
+            return (
+                <code className={className} {...props}>
+                    {children}
+                </code>
+            );
+        },
+        a: createLinkComponent(onFileOpen),
+    };
+}
+
+// 保留一个默认的组件对象用于工具输出等不需要 onFileOpen 的场景
+const markdownCodeComponents = createMarkdownComponents();
 
 interface ChatPanelProps {
     sessionId: string;
@@ -216,29 +270,44 @@ function ToolInputDisplay({ toolName, input }: { toolName: string; input: string
 }
 
 /** Render tool output in a readable format with Markdown */
-function ToolOutputDisplay({ toolName, output }: { toolName: string; output: string }) {
+function ToolOutputDisplay({
+    toolName,
+    output,
+    onFileOpen,
+}: {
+    toolName: string;
+    output: string;
+    onFileOpen?: (path: string) => void;
+}) {
     const processed = unescapeNewlines(output);
     const displayText = processed.length > 3000
         ? processed.slice(0, 3000) + "\n\n---\n> ⚠️ 内容过长，已截断显示"
         : processed;
 
+    // 为工具输出创建 markdown 组件（支持链接点击）
+    const components = useMemo(
+        () => createMarkdownComponents(onFileOpen),
+        [onFileOpen]
+    );
+
     // python_repl / terminal: wrap in code block for syntax highlighting
+    // 代码块内部不做 linkify，保持原样
     if (toolName === "python_repl" || toolName === "terminal") {
         const wrapped = `\`\`\`\n${displayText}\n\`\`\``;
         return (
             <div className="text-xs max-h-72 overflow-y-auto rounded-lg chat-message-content tool-detail-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
                     {wrapped}
                 </ReactMarkdown>
             </div>
         );
     }
 
-    // All other tools: render as rich Markdown
+    // All other tools: render as rich Markdown with linkified URLs/paths
     return (
         <div className="text-xs max-h-72 overflow-y-auto rounded-lg bg-muted/40 p-2.5 chat-message-content tool-detail-content">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
-                {displayText}
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+                {linkifyText(displayText)}
             </ReactMarkdown>
         </div>
     );
@@ -278,6 +347,12 @@ export default function ChatPanel({
     useEffect(() => {
         inputRef.current?.focus();
     }, [sessionId]);
+
+    // 创建带 onFileOpen 回调的 Markdown 组件
+    const mdComponents = useMemo(
+        () => createMarkdownComponents(onFileOpen),
+        [onFileOpen]
+    );
 
     const handleSend = useCallback(() => {
         const text = inputValue.trim();
@@ -371,8 +446,8 @@ export default function ChatPanel({
                                             if (seg.type === "text") {
                                                 return seg.content ? (
                                                     <div key={j} className="chat-message-content text-sm">
-                                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
-                                                            {seg.content}
+                                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                                                            {linkifyText(seg.content)}
                                                         </ReactMarkdown>
                                                     </div>
                                                 ) : null;
@@ -414,7 +489,7 @@ export default function ChatPanel({
                                                                 {tc.output && (
                                                                     <div>
                                                                         <div className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-semibold mb-1">输出</div>
-                                                                        <ToolOutputDisplay toolName={tc.tool} output={tc.output} />
+                                                                        <ToolOutputDisplay toolName={tc.tool} output={tc.output} onFileOpen={onFileOpen} />
                                                                     </div>
                                                                 )}
                                                             </div>
@@ -497,7 +572,7 @@ export default function ChatPanel({
                                                                 {tc.output && (
                                                                     <div>
                                                                         <div className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-semibold mb-1">输出</div>
-                                                                        <ToolOutputDisplay toolName={tc.tool} output={tc.output} />
+                                                                        <ToolOutputDisplay toolName={tc.tool} output={tc.output} onFileOpen={onFileOpen} />
                                                                     </div>
                                                                 )}
                                                             </div>
@@ -509,8 +584,8 @@ export default function ChatPanel({
                                         )}
                                         {msg.content && (
                                             <div className="chat-message-content text-sm">
-                                                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
-                                                    {msg.content}
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                                                    {linkifyText(msg.content)}
                                                 </ReactMarkdown>
                                             </div>
                                         )}
@@ -547,8 +622,8 @@ export default function ChatPanel({
                                             >
                                                 {(displayText) => (
                                                     <div className="chat-message-content text-sm">
-                                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownCodeComponents}>
-                                                            {displayText}
+                                                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                                                            {linkifyText(displayText)}
                                                         </ReactMarkdown>
                                                         {/* 最后一个文本片段时显示光标 */}
                                                         {j === streamingSegments.length - 1 && (
@@ -595,7 +670,7 @@ export default function ChatPanel({
                                                         {seg.output ? (
                                                             <div>
                                                                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground/50 font-semibold mb-1">输出</div>
-                                                                <ToolOutputDisplay toolName={seg.tool} output={seg.output} />
+                                                                <ToolOutputDisplay toolName={seg.tool} output={seg.output} onFileOpen={onFileOpen} />
                                                             </div>
                                                         ) : (
                                                             <div className="flex items-center gap-2 text-xs text-muted-foreground/50">
