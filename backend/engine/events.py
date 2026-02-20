@@ -169,9 +169,27 @@ def build_llm_end_from_raw(event: dict, tracked: dict) -> dict:
         tool_calls = []
         if hasattr(output_msg, "tool_calls") and output_msg.tool_calls:
             for tc in output_msg.tool_calls:
+                # 支持字典和对象两种格式（不同 LLM 返回格式可能不同）
+                if isinstance(tc, dict):
+                    name = tc.get("name", "unknown")
+                    args = tc.get("args", tc.get("arguments", ""))
+                else:
+                    # 对象格式：优先取 name/args，其次取 function.name/function.arguments
+                    name = getattr(tc, "name", None)
+                    if name is None and hasattr(tc, "function"):
+                        func = tc.function
+                        name = func.get("name") if isinstance(func, dict) else getattr(func, "name", "unknown")
+                    name = name or "unknown"
+
+                    args = getattr(tc, "args", None) or getattr(tc, "arguments", None)
+                    if args is None and hasattr(tc, "function"):
+                        func = tc.function
+                        args = func.get("arguments") if isinstance(func, dict) else getattr(func, "arguments", "")
+                    args = args or ""
+
                 tc_info = {
-                    "name": getattr(tc, "name", getattr(tc, "function", {}).get("name") if hasattr(tc, "function") else "unknown"),
-                    "arguments": getattr(tc, "arguments", getattr(tc, "function", {}).get("arguments") if hasattr(tc, "function") else ""),
+                    "name": name,
+                    "arguments": json.dumps(args, ensure_ascii=False) if isinstance(args, dict) else str(args),
                 }
                 tool_calls.append(tc_info)
 
