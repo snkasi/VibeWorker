@@ -16,6 +16,7 @@
 | 程序性记忆 | 无 | procedural 分类 (工具使用经验) |
 | 日志格式 | .md | .json (结构化) |
 | 自动归档 | 无 | 30天摘要归档，60天清理 |
+| 反思系统 | 无 | 会话结束时自动反思 (1 次 LLM 调用) |
 
 ---
 
@@ -26,7 +27,7 @@
 │                    Working Memory (工作记忆)                      │
 │  当前对话上下文 + 最近 N 条消息（已有，在 messages 中）              │
 └─────────────────────────────────────────────────────────────────┘
-                              ↓ 对话结束时提取
+                              ↓ 会话结束时自动反思
 ┌─────────────────────────────────────────────────────────────────┐
 │                 Short-Term Memory (短期记忆)                      │
 │  Daily Logs: memory/logs/YYYY-MM-DD.json                        │
@@ -137,7 +138,33 @@
 
 ## 四、核心机制
 
-### 4.1 记忆整合决策（Mem0-Inspired）
+### 4.1 双路径记忆写入
+
+**路径 1: Agent 主动写入**
+```
+Agent 调用 memory_write 工具
+    ↓
+consolidator.consolidate_memory()
+    ↓
+LLM 决策：ADD / UPDATE / DELETE / NOOP
+    ↓
+写入 memory.json 或 daily log
+```
+
+**路径 2: 会话结束时自动反思**
+```
+会话结束
+    ↓
+session_reflector.reflect_on_session(messages)
+    ↓
+1 次 LLM 调用 → 提取 + 整合决策
+    ↓
+返回：ADD / UPDATE / NOOP 操作列表
+    ↓
+批量写入 memory.json
+```
+
+### 4.2 记忆整合决策（Mem0-Inspired）
 
 当新记忆需要写入时，系统使用 LLM 决策：
 
@@ -156,7 +183,16 @@
 - NOOP: 已存在或无需记录
 ```
 
-### 4.2 重要性评分 + 时间衰减
+**consolidator.py 负责：**
+- Agent 通过 `memory_write` 工具主动写入记忆时的整合决策
+- 搜索相似记忆 → LLM 决策 → 执行操作
+
+**session_reflector.py 负责：**
+- 会话结束时的自动反思 + 整合
+- 1 次 LLM 调用完成：提取值得记住的内容 + 整合决策（ADD/UPDATE/NOOP）
+- 支持多条记忆批量处理
+
+### 4.3 重要性评分 + 时间衰减
 
 ```python
 def compute_relevance(memory, query_embedding, now):
@@ -170,11 +206,11 @@ def compute_relevance(memory, query_embedding, now):
     return semantic * memory.salience * decay
 ```
 
-### 4.3 隐式召回
+### 4.4 隐式召回
 
 对话开始时，基于首条消息自动检索 top-3 相关记忆 + procedural memory 注入到 System Prompt。
 
-### 4.4 反思记忆（Procedural Memory）
+### 4.5 程序性记忆（Procedural Memory）
 
 **触发场景：**
 
@@ -185,7 +221,12 @@ def compute_relevance(memory, query_embedding, now):
 | 重复尝试 | 同类错误出现 2+ 次 | 合并为通用规则 |
 | 用户纠正 | 用户说「下次不要这样」 | 记录为显式规则 |
 
-### 4.5 日志自动归档
+**实现方式：**
+- 会话结束时，`session_reflector` 分析工具调用失败模式
+- 自动生成 procedural 类型记忆
+- 下次对话通过隐式召回注入到 System Prompt
+
+### 4.6 日志自动归档
 
 - **30 天后**：LLM 生成摘要 → 重要内容提升为长期记忆
 - **60 天后**：删除原始日志文件
@@ -196,32 +237,94 @@ def compute_relevance(memory, query_embedding, now):
 
 ```
 backend/memory/
-├── __init__.py          # 模块入口，导出 memory_manager 单例
-├── models.py            # 数据模型（MemoryEntry, DailyLog 等）
-├── manager.py           # 核心管理器（CRUD + 迁移 + 统计）
-├── search.py            # 搜索逻辑（向量 + 关键词 + 衰减）
-├── extractor.py         # 记忆提取器（从对话中自动提取）
-├── consolidator.py      # 记忆整合器（ADD/UPDATE/DELETE/NOOP）
-├── reflector.py         # 反思记忆（工具失败分析）
-├── archiver.py          # 日志归档（摘要 + 清理）
-└── ARCHITECTURE.md      # 本文档
+├── __init__.py              # 模块入口，导出 memory_manager 单例
+├── models.py                # 数据模型（MemoryEntry, DailyLog 等）
+├── manager.py               # 核心管理器（CRUD + 迁移 + 统计）
+├── search.py                # 搜索逻辑（向量 + 关键词 + 衰减）
+├── session_reflector.py     # 会话反思器（1 次 LLM 调用完成提取+整合）
+├── consolidator.py          # 整合器（Agent memory_write 工具的 ADD/UPDATE/DELETE 决策）
+├── archiver.py              # 日志归档（摘要 + 清理）
+└── ARCHITECTURE.md          # 本文档
 ```
 
-**存储目录：**
+### 模块职责详解
 
-```
-~/.vibeworker/
-└── memory/
-    ├── memory.json              # 长期记忆（替代 MEMORY.md）
-    ├── memory.json.bak          # 自动备份
-    └── logs/
-        ├── 2026-02-21.json
-        └── 2026-02-20.json
-```
+**manager.py (核心管理器)**
+- CRUD 操作：add_memory(), update_memory(), delete_memory(), list_memories()
+- 日志管理：write_daily_log(), get_daily_logs()
+- 统计信息：get_stats()
+- 自动迁移：v1 → v2 格式转换
+- 滚动摘要管理
+
+**search.py (搜索引擎)**
+- 语义搜索：向量相似度计算
+- 关键词搜索：关键词匹配
+- 时间衰减：指数衰减曲线
+- 隐式召回：对话开始时自动检索
+- 分类筛选：按 category 过滤
+
+**session_reflector.py (会话反思器)**
+- 会话结束时自动调用：`reflect_on_session(messages)`
+- **1 次 LLM 调用**完成：
+  - 提取值得记住的内容（偏好、事实、经验教训）
+  - 对每条提取内容决策：ADD / UPDATE / NOOP
+- 返回操作列表：`[(action, content, category, salience, existing_id), ...]`
+- 支持 procedural 记忆自动识别（工具使用经验）
+
+**consolidator.py (整合器)**
+- Agent 通过 `memory_write` 工具主动写入时调用
+- 搜索相似记忆（语义 + 关键词）
+- LLM 决策：ADD / UPDATE / DELETE / NOOP
+- 执行操作并返回结果
+
+**archiver.py (归档器)**
+- 定期扫描旧日志（30天+）
+- LLM 生成摘要
+- 重要内容提升为长期记忆
+- 60天后删除原始日志
 
 ---
 
-## 六、API 接口
+## 六、反思系统简化
+
+### 6.1 旧版架构（已废弃）
+
+```
+extractor.py              # 对话中自动提取记忆
+reflector.py              # 工具失败时分析
+reflection_strategies.py  # 多种反思策略
+reflection_dispatcher.py  # Hook 系统 + 事件分发
+```
+
+**问题：**
+- 4 个文件，职责重叠
+- Hook 系统复杂，难以维护
+- 写入路径多达 5+，难以追踪
+- 配置项分散（`memory_auto_extract`, `memory_reflection_enabled`）
+
+### 6.2 新版架构（当前）
+
+```
+session_reflector.py      # 唯一反思模块，1 次 LLM 调用完成所有工作
+consolidator.py           # Agent 主动写入时的整合决策
+```
+
+**优势：**
+- 只有 2 条写入路径，清晰可控
+- 会话反思集中化：1 个函数，1 次 LLM 调用
+- 配置项简化：只需 `memory_session_reflect_enabled`
+- 移除 Hook 系统，减少复杂度
+
+### 6.3 反思触发时机
+
+| 场景 | 触发模块 | 调用时机 |
+|------|----------|---------|
+| Agent 主动写入 | consolidator | `memory_write` 工具调用时 |
+| 会话结束反思 | session_reflector | 会话结束时（POST /api/chat 返回前） |
+
+---
+
+## 七、API 接口
 
 ### 新增 API
 
@@ -242,12 +345,12 @@ backend/memory/
 
 ---
 
-## 七、配置项
+## 八、配置项
 
 ```bash
-# Memory v2 Configuration
+# Memory v2 核心配置
+MEMORY_SESSION_REFLECT_ENABLED=true   # 会话反思开关（替代旧的 auto_extract + reflection_enabled）
 MEMORY_CONSOLIDATION_ENABLED=true     # 智能整合开关
-MEMORY_REFLECTION_ENABLED=true        # 反思记忆开关
 MEMORY_ARCHIVE_DAYS=30                # 归档阈值（天）
 MEMORY_DELETE_DAYS=60                 # 删除阈值（天）
 MEMORY_DECAY_LAMBDA=0.05              # 衰减系数（14天衰减到50%）
@@ -255,15 +358,33 @@ MEMORY_IMPLICIT_RECALL_ENABLED=true   # 隐式召回开关
 MEMORY_IMPLICIT_RECALL_TOP_K=3        # 隐式召回数量
 
 # 继承自 v1
-MEMORY_AUTO_EXTRACT=false             # 自动提取开关
 MEMORY_DAILY_LOG_DAYS=2               # Prompt 加载日志天数
 MEMORY_MAX_PROMPT_TOKENS=4000         # 记忆 Token 预算
 MEMORY_INDEX_ENABLED=true             # 语义搜索索引开关
 ```
 
+**配置项变更说明：**
+- ❌ 废弃：`MEMORY_AUTO_EXTRACT`（旧版实时提取，已移除）
+- ❌ 废弃：`MEMORY_REFLECTION_ENABLED`（旧版反思开关，已移除）
+- ✅ 新增：`MEMORY_SESSION_REFLECT_ENABLED`（会话结束时自动反思，默认 true）
+
 ---
 
-## 八、自动迁移
+## 九、存储目录
+
+```
+~/.vibeworker/
+└── memory/
+    ├── memory.json              # 长期记忆（替代 MEMORY.md）
+    ├── memory.json.bak          # 自动备份
+    └── logs/
+        ├── 2026-02-21.json
+        └── 2026-02-20.json
+```
+
+---
+
+## 十、自动迁移
 
 首次启动时，系统自动执行以下迁移：
 
@@ -280,7 +401,7 @@ MEMORY_INDEX_ENABLED=true             # 语义搜索索引开关
 
 ---
 
-## 九、工具集成
+## 十一、工具集成
 
 ### memory_write 工具
 
@@ -292,6 +413,12 @@ memory_write(
     salience=0.8            # 重要性 (0.0-1.0)
 )
 ```
+
+**执行流程：**
+1. Agent 调用工具
+2. `consolidator.consolidate_memory()` 搜索相似记忆
+3. LLM 决策：ADD / UPDATE / DELETE / NOOP
+4. 写入 memory.json 或 daily log
 
 ### memory_search 工具
 
@@ -306,7 +433,7 @@ memory_search(
 
 ---
 
-## 十、前端适配
+## 十二、前端适配
 
 ### MemoryPanel 更新
 
@@ -321,13 +448,35 @@ memory.json 可在右侧 Monaco Editor 中查看和编辑（支持 JSON 语法�
 
 ---
 
-## 十一、验证方式
+## 十三、验证方式
 
 1. **自动迁移**：启动后检查 memory.json 是否生成，MEMORY.md.migrated 是否存在
-2. **反思记忆**：fetch_url 失败后检查 memory.json 中是否有 procedural 记录
-3. **智能整合**：添加相似记忆时验证是否触发 UPDATE
-4. **时间衰减**：memory_search 返回结果按 salience × 衰减排序
-5. **日志归档**：30 天后的日志自动摘要，前端展示正常
+2. **会话反思**：对话结束后检查 memory.json 是否新增记忆（source="auto_reflection"）
+3. **程序性记忆**：工具失败后检查是否有 procedural 记录
+4. **智能整合**：添加相似记忆时验证是否触发 UPDATE
+5. **时间衰减**：memory_search 返回结果按 salience × 衰减排序
+6. **日志归档**：30 天后的日志自动摘要，前端展示正常
+
+---
+
+## 十四、性能优化
+
+### 14.1 向量索引
+
+- 使用 FAISS 或 LlamaIndex 向量存储
+- 启动时加载索引（`storage/memory_index/`）
+- 增量更新：新增记忆时实时更新索引
+
+### 14.2 缓存策略
+
+- 嵌入缓存：相同内容复用 embedding
+- LLM 决策缓存：相似场景复用决策结果（需谨慎）
+- 搜索结果缓存：短期内相同查询复用结果
+
+### 14.3 批量处理
+
+- 会话反思：1 次 LLM 调用处理多条记忆
+- 日志归档：批量处理多天日志
 
 ---
 

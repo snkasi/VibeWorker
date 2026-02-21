@@ -30,7 +30,6 @@ import {
     addMemoryEntry,
     deleteMemoryEntry,
     fetchDailyLogs,
-    deleteDailyLog,
     searchMemory,
     fetchMemoryStats,
     fetchRollingSummary,
@@ -41,30 +40,41 @@ import {
     type DailyLog,
 } from "@/lib/api";
 
-type MemoryTab = "entries" | "logs" | "files";
+type MemoryTab = "entries" | "files";
 
+// 前端筛选分类：将 reflections + procedural 合并为"经验"
 const CATEGORY_OPTIONS = [
     { value: "", label: "全部" },
     { value: "preferences", label: "偏好" },
     { value: "facts", label: "事实" },
     { value: "tasks", label: "任务" },
-    { value: "reflections", label: "反思" },
-    { value: "procedural", label: "程序" },
+    { value: "experience", label: "经验" },
     { value: "general", label: "通用" },
 ];
 
+// 后端分类到前端显示标签的映射
 const CATEGORY_LABELS: Record<string, string> = {
     preferences: "偏好",
     facts: "事实",
     tasks: "任务",
-    reflections: "反思",
-    procedural: "程序",
+    reflections: "经验",
+    procedural: "经验",
     general: "通用",
 };
+
+// 添加表单的分类选项（写入后端时映射回 reflections）
+const ADD_CATEGORY_OPTIONS = [
+    { value: "preferences", label: "偏好" },
+    { value: "facts", label: "事实" },
+    { value: "tasks", label: "任务" },
+    { value: "reflections", label: "经验" },
+    { value: "general", label: "通用" },
+];
 
 // 来源标识图标和标签
 const SOURCE_CONFIG: Record<string, { icon: typeof User; label: string; color: string }> = {
     user_explicit: { icon: User, label: "手动", color: "text-blue-500" },
+    session_reflect: { icon: Bot, label: "反思", color: "text-green-500" },
     auto_extract: { icon: Bot, label: "提取", color: "text-green-500" },
     auto_reflection: { icon: Wrench, label: "反思", color: "text-orange-500" },
     user_correction: { icon: Zap, label: "纠正", color: "text-red-500" },
@@ -72,8 +82,7 @@ const SOURCE_CONFIG: Record<string, { icon: typeof User; label: string; color: s
     migration: { icon: RefreshCw, label: "迁移", color: "text-muted-foreground" },
 };
 
-// 人格文件列表（仅 workspace 目录下的 .md 文件）
-// memory.json 通过"记忆"标签页的 UI 管理，不在此列表中显示
+// 人格文件列表
 const WORKSPACE_FILES = [
     { name: "SOUL.md", path: "workspace/SOUL.md", icon: "💫" },
     { name: "IDENTITY.md", path: "workspace/IDENTITY.md", icon: "🪪" },
@@ -130,6 +139,9 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
     const [rollingSummary, setRollingSummary] = useState("");
     const [showSummary, setShowSummary] = useState(false);
 
+    // 近期日志折叠
+    const [showLogs, setShowLogs] = useState(false);
+
     // 添加表单
     const [showAddForm, setShowAddForm] = useState(false);
     const [newContent, setNewContent] = useState("");
@@ -140,17 +152,37 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
     // 操作状态
     const [isReindexing, setIsReindexing] = useState(false);
 
+    // 前端筛选逻辑：将"经验"映射为 reflections + procedural
+    const getFilteredEntries = useCallback(() => {
+        if (categoryFilter === "experience") {
+            return entries.filter(
+                (e) => e.category === "reflections" || e.category === "procedural"
+            );
+        }
+        if (categoryFilter) {
+            return entries.filter((e) => e.category === categoryFilter);
+        }
+        return entries;
+    }, [entries, categoryFilter]);
+
+    // 获取合并后的分类计数（经验 = reflections + procedural）
+    const getExperienceCount = useCallback(() => {
+        if (!stats) return 0;
+        return (stats.category_counts["reflections"] || 0) + (stats.category_counts["procedural"] || 0);
+    }, [stats]);
+
     const loadEntries = useCallback(async () => {
         setIsLoading(true);
         try {
-            const data = await fetchMemoryEntries(categoryFilter || undefined);
+            // 总是加载全部，前端做筛选（因为"经验"需要合并两个后端分类）
+            const data = await fetchMemoryEntries();
             setEntries(data.entries);
         } catch {
             // 后端可能未运行
         } finally {
             setIsLoading(false);
         }
-    }, [categoryFilter]);
+    }, []);
 
     const loadStats = useCallback(async () => {
         try {
@@ -178,8 +210,8 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
         if (activeTab === "entries") {
             loadEntries();
             loadStats();
+            loadDailyLogs();
         }
-        if (activeTab === "logs") loadDailyLogs();
     }, [activeTab, loadEntries, loadStats, loadDailyLogs]);
 
     const handleSearch = async () => {
@@ -224,16 +256,6 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
         }
     };
 
-    const handleDeleteDailyLog = async (e: React.MouseEvent, date: string) => {
-        e.stopPropagation();
-        try {
-            await deleteDailyLog(date);
-            await loadDailyLogs();
-        } catch {
-            // Ignore
-        }
-    };
-
     const handleReindex = async () => {
         setIsReindexing(true);
         try {
@@ -245,14 +267,15 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
         }
     };
 
+    const filteredEntries = getFilteredEntries();
+
     return (
         <div className="flex flex-col h-full">
-            {/* Tab Bar */}
+            {/* Tab Bar — 2 Tab: 记忆 / 人格 */}
             <div className="flex items-center gap-1 px-2 pt-1 pb-1">
                 {(
                     [
                         { id: "entries", label: "记忆", icon: FileText },
-                        { id: "logs", label: "日记", icon: Calendar },
                         { id: "files", label: "人格", icon: FileText },
                     ] as const
                 ).map((tab) => (
@@ -273,8 +296,8 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                 ))}
             </div>
 
-            {/* Search Bar (entries & logs tabs) */}
-            {activeTab !== "files" && (
+            {/* Search Bar (entries tab only) */}
+            {activeTab === "entries" && (
                 <div className="px-2 py-1.5">
                     <div className="relative">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
@@ -355,7 +378,7 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
             {/* Content */}
             <ScrollArea className="flex-1 overflow-hidden">
                 <div className="p-2 space-y-1 w-full overflow-hidden">
-                    {/* Entries Tab */}
+                    {/* Entries Tab — 统一记忆视图 */}
                     {activeTab === "entries" && (
                         <>
                             {/* Rolling Summary */}
@@ -379,25 +402,35 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
 
                             {/* Category Filter + Actions */}
                             <div className="flex flex-wrap gap-1 px-1 pb-1.5">
-                                {CATEGORY_OPTIONS.map((opt) => (
-                                    <button
-                                        key={opt.value}
-                                        onClick={() => setCategoryFilter(opt.value)}
-                                        className={`px-2 py-0.5 text-[10px] rounded-full transition-all ${
-                                            categoryFilter === opt.value
-                                                ? "bg-primary/15 text-primary font-medium"
-                                                : "bg-accent/50 text-muted-foreground hover:bg-accent"
-                                        }`}
-                                    >
-                                        {opt.label}
-                                        {/* 分类计数 */}
-                                        {stats && opt.value && stats.category_counts[opt.value] > 0 && (
-                                            <span className="ml-0.5 text-muted-foreground/50">
-                                                {stats.category_counts[opt.value]}
-                                            </span>
-                                        )}
-                                    </button>
-                                ))}
+                                {CATEGORY_OPTIONS.map((opt) => {
+                                    // 计算每个筛选项的数量
+                                    let count = 0;
+                                    if (stats && opt.value) {
+                                        if (opt.value === "experience") {
+                                            count = getExperienceCount();
+                                        } else {
+                                            count = stats.category_counts[opt.value] || 0;
+                                        }
+                                    }
+                                    return (
+                                        <button
+                                            key={opt.value}
+                                            onClick={() => setCategoryFilter(opt.value)}
+                                            className={`px-2 py-0.5 text-[10px] rounded-full transition-all ${
+                                                categoryFilter === opt.value
+                                                    ? "bg-primary/15 text-primary font-medium"
+                                                    : "bg-accent/50 text-muted-foreground hover:bg-accent"
+                                            }`}
+                                        >
+                                            {opt.label}
+                                            {count > 0 && (
+                                                <span className="ml-0.5 text-muted-foreground/50">
+                                                    {count}
+                                                </span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
                                 <div className="flex items-center gap-0.5 ml-auto">
                                     <Tooltip>
                                         <TooltipTrigger asChild>
@@ -440,7 +473,7 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                                             onChange={(e) => setNewCategory(e.target.value)}
                                             className="h-6 px-2 text-[10px] rounded border border-border/50 bg-background"
                                         >
-                                            {CATEGORY_OPTIONS.filter((o) => o.value).map((opt) => (
+                                            {ADD_CATEGORY_OPTIONS.map((opt) => (
                                                 <option key={opt.value} value={opt.value}>
                                                     {opt.label}
                                                 </option>
@@ -494,7 +527,7 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                                     <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                                 </div>
                             )}
-                            {!isLoading && entries.length === 0 && (
+                            {!isLoading && filteredEntries.length === 0 && (
                                 <div className="px-3 py-8 text-center">
                                     <p className="text-xs text-muted-foreground">暂无持久记忆</p>
                                     <p className="text-xs text-muted-foreground/60 mt-1">
@@ -502,7 +535,7 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                                     </p>
                                 </div>
                             )}
-                            {entries.map((entry) => (
+                            {filteredEntries.map((entry) => (
                                 <div
                                     key={entry.entry_id}
                                     className="px-3 py-2 rounded-xl text-sm hover:bg-accent/50 transition-all group"
@@ -545,6 +578,38 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                                 </div>
                             ))}
 
+                            {/* 近期日志折叠区 */}
+                            {dailyLogs.length > 0 && (
+                                <div className="mt-3 border-t border-border/30 pt-2">
+                                    <button
+                                        onClick={() => setShowLogs(!showLogs)}
+                                        className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                                    >
+                                        <Calendar className="w-3 h-3 shrink-0" />
+                                        <span>近期日志</span>
+                                        <span className="text-muted-foreground/50">{dailyLogs.length}</span>
+                                        <ChevronDown className={`w-3 h-3 ml-auto transition-transform ${showLogs ? "rotate-180" : ""}`} />
+                                    </button>
+                                    {showLogs && (
+                                        <div className="mt-1 space-y-0.5">
+                                            {dailyLogs.slice(0, 10).map((log) => (
+                                                <button
+                                                    key={log.date}
+                                                    className="w-full text-left px-3 py-1.5 rounded-lg text-[10px] hover:bg-accent transition-all flex items-center gap-2"
+                                                    onClick={() => onFileOpen?.(log.path)}
+                                                >
+                                                    <span className="font-mono text-muted-foreground">{log.date}</span>
+                                                    <span className="text-muted-foreground/40 ml-auto">
+                                                        {formatSize(log.size)}
+                                                    </span>
+                                                    <ChevronRight className="w-3 h-3 text-muted-foreground/30" />
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Stats Footer */}
                             {stats && stats.total_entries > 0 && (
                                 <div className="px-2 pt-2 pb-1 border-t border-border/30 mt-2">
@@ -557,38 +622,7 @@ export default function MemoryPanel({ onFileOpen }: MemoryPanelProps) {
                         </>
                     )}
 
-                    {/* Daily Logs Tab */}
-                    {activeTab === "logs" && (
-                        <>
-                            {dailyLogs.length === 0 && (
-                                <div className="px-3 py-8 text-center">
-                                    <p className="text-xs text-muted-foreground">暂无日记</p>
-                                    <p className="text-xs text-muted-foreground/60 mt-1">
-                                        对话过程中会自动生成每日日记
-                                    </p>
-                                </div>
-                            )}
-                            {dailyLogs.map((log) => (
-                                <button
-                                    key={log.date}
-                                    className="w-full text-left px-3 py-2.5 rounded-xl text-sm hover:bg-accent transition-all duration-150 flex items-center gap-2 group"
-                                    onClick={() => onFileOpen?.(log.path)}
-                                >
-                                    <Calendar className="w-3.5 h-3.5 text-primary/60 shrink-0" />
-                                    <span className="flex-1 font-mono text-xs">{log.date}</span>
-                                    <span className="text-[10px] text-muted-foreground/50">
-                                        {formatSize(log.size)}
-                                    </span>
-                                    <Trash2
-                                        className="w-3.5 h-3.5 opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:text-destructive shrink-0 transition-opacity"
-                                        onClick={(e) => handleDeleteDailyLog(e, log.date)}
-                                    />
-                                </button>
-                            ))}
-                        </>
-                    )}
-
-                    {/* Files Tab */}
+                    {/* Files Tab — 人格（保持不变） */}
                     {activeTab === "files" && (
                         <div className="space-y-1">
                             {WORKSPACE_FILES.map((file) => (

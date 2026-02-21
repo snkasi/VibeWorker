@@ -303,7 +303,7 @@ vibeworker/
 │   │   ├── manager.py             # Core manager (CRUD, stats)
 │   │   ├── search.py              # Search (vector + keyword + decay)
 │   │   ├── consolidator.py        # Smart consolidation
-│   │   ├── reflector.py           # Reflective memory extraction
+│   │   ├── session_reflector.py   # Session-level reflection
 │   │   └── archiver.py            # Log archival
 │   ├── tools/                     # 8 Core Tools
 │   ├── cache/                     # L1+L2 cache system

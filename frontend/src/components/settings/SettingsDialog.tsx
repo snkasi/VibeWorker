@@ -466,7 +466,7 @@ export default function SettingsDialog() {
         translate_api_key: "",
         translate_api_base: "",
         translate_model: "",
-        memory_auto_extract: false,
+        memory_session_reflect_enabled: true,
         memory_daily_log_days: 2,
         memory_max_prompt_tokens: 4000,
         memory_index_enabled: true,
@@ -703,13 +703,13 @@ export default function SettingsDialog() {
                         {/* Memory Tab */}
                         <TabsContent value="memory" className="space-y-3 mt-0 max-h-[60vh] overflow-y-auto pr-1">
                             <p className="text-xs text-muted-foreground mb-3">
-                                配置记忆系统行为，包括自动提取和日志注入
+                                配置记忆系统行为
                             </p>
                             <ToggleField
-                                label="自动提取记忆"
-                                checked={form.memory_auto_extract}
-                                onChange={(v) => updateField("memory_auto_extract", v)}
-                                hint="(会产生额外 LLM 调用)"
+                                label="会话反思"
+                                checked={form.memory_session_reflect_enabled}
+                                onChange={(v) => updateField("memory_session_reflect_enabled", v)}
+                                hint="会话结束后自动提取记忆（1 次 LLM 调用）"
                             />
                             <ToggleField
                                 label="语义搜索索引"

@@ -287,7 +287,7 @@ backend/
 ├── requirements.txt, mcp_servers.json
 ├── memory/                 # 记忆系统 v2 模块
 │   ├── __init__.py, models.py, manager.py, search.py
-│   ├── extractor.py, consolidator.py, reflector.py, archiver.py
+│   ├── session_reflector.py, consolidator.py, archiver.py
 ├── sessions/               # JSON 会话
 ├── skills/                 # SKILL.md 文件夹
 ├── workspace/              # SOUL.md, IDENTITY.md, USER.md, AGENTS.md

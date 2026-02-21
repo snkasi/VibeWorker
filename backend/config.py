@@ -124,13 +124,12 @@ class Settings(BaseSettings):
     cache_max_disk_size_mb: int = Field(default=5120)
 
     # Memory Configuration
-    memory_auto_extract: bool = Field(default=False)
+    memory_session_reflect_enabled: bool = Field(default=True)
     memory_daily_log_days: int = Field(default=2)
     memory_max_prompt_tokens: int = Field(default=4000)
     memory_index_enabled: bool = Field(default=True)
     # Memory v2 Configuration
     memory_consolidation_enabled: bool = Field(default=True)
-    memory_reflection_enabled: bool = Field(default=True)
     memory_archive_days: int = Field(default=30)
     memory_delete_days: int = Field(default=60)
     memory_decay_lambda: float = Field(default=0.05)

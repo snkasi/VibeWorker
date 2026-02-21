@@ -363,12 +363,12 @@ scripts\skills.bat install <name>
 - **DELETE**：与已有记忆矛盾，删除旧的
 - **NOOP**：已存在或无需记录
 
-#### 2.6 反思记忆 (Procedural Memory)
-自动从工具失败中学习：
-- 工具返回错误时触发分析
-- 提取可复用的经验教训
-- 存储为 `procedural` 分类记忆
-- 在 System Prompt 中自动注入相关工具注意事项
+#### 2.6 反思记忆 (Session Reflection)
+会话结束时自动反思：
+- 会话结束时触发反思流程
+- 提取会话中的经验教训和改进建议
+- 存储为 `reflections` 分类记忆
+- 在 System Prompt 中自动注入相关反思内容
 
 #### 2.7 隐式召回
 对话开始时，基于首条消息自动检索 top-3 相关记忆 + procedural memory 注入到 System Prompt。
@@ -378,9 +378,8 @@ scripts\skills.bat install <name>
 + `manager.py`: 核心管理器（CRUD、迁移、统计）
 + `models.py`: 数据模型（MemoryEntry, DailyLog 等）
 + `search.py`: 搜索逻辑（向量 + 关键词 + 衰减）
-+ `extractor.py`: 记忆提取器
 + `consolidator.py`: 记忆整合器
-+ `reflector.py`: 反思记忆提取
++ `session_reflector.py`: 会话级反思
 + `archiver.py`: 日志归档
 
 ### 3. 系统提示词 (System Prompt) 构成
@@ -413,20 +412,19 @@ System Prompt 由以下部分动态拼接而成（按顺序）：
 ### 5. 记忆配置项 ✅ 已实现
 
 ```bash
-# 基础配置（继承自 v1）
-MEMORY_AUTO_EXTRACT=false       # 自动提取记忆（默认关闭）
+# 基础配置
 MEMORY_DAILY_LOG_DAYS=2         # System Prompt 中加载最近几天的日志
 MEMORY_MAX_PROMPT_TOKENS=4000   # 记忆在 Prompt 中的 Token 上限
 MEMORY_INDEX_ENABLED=true       # 记忆语义搜索索引开关
 
 # 记忆系统 v2 配置
-MEMORY_CONSOLIDATION_ENABLED=true     # 智能整合开关
-MEMORY_REFLECTION_ENABLED=true        # 反思记忆开关
-MEMORY_ARCHIVE_DAYS=30                # 归档阈值（天）
-MEMORY_DELETE_DAYS=60                 # 删除阈值（天）
-MEMORY_DECAY_LAMBDA=0.05              # 衰减系数（14天衰减到50%）
-MEMORY_IMPLICIT_RECALL_ENABLED=true   # 隐式召回开关
-MEMORY_IMPLICIT_RECALL_TOP_K=3        # 隐式召回数量
+MEMORY_CONSOLIDATION_ENABLED=true         # 智能整合开关
+MEMORY_SESSION_REFLECT_ENABLED=true       # 会话级反思开关
+MEMORY_ARCHIVE_DAYS=30                    # 归档阈值（天）
+MEMORY_DELETE_DAYS=60                     # 删除阈值（天）
+MEMORY_DECAY_LAMBDA=0.05                  # 衰减系数（14天衰减到50%）
+MEMORY_IMPLICIT_RECALL_ENABLED=true       # 隐式召回开关
+MEMORY_IMPLICIT_RECALL_TOP_K=3            # 隐式召回数量
 ```
 
 ### 6. 会话存储 (Sessions)
@@ -684,9 +682,8 @@ vibeworker/
 │   │   ├── models.py           # 数据模型（MemoryEntry, DailyLog 等）
 │   │   ├── manager.py          # 核心管理器（CRUD、迁移、统计）
 │   │   ├── search.py           # 搜索逻辑（向量 + 关键词 + 衰减）
-│   │   ├── extractor.py        # 记忆提取器
 │   │   ├── consolidator.py     # 记忆整合器（ADD/UPDATE/DELETE/NOOP）
-│   │   ├── reflector.py        # 反思记忆提取
+│   │   ├── session_reflector.py # 会话级反思
 │   │   ├── archiver.py         # 日志归档
 │   │   └── ARCHITECTURE.md     # 架构文档
 │   ├── session_context.py      # 会话上下文管理（session_id → 临时目录映射）✅

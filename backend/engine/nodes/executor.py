@@ -160,11 +160,6 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> dict[str, 
                 exec_messages.append(ToolMessage(content=result_str, tool_call_id=call_id))
                 logger.info("[%s] Executor 工具: %s, 成功=%s", sid, tool_name, "[ERROR]" not in result_str)
 
-                # 发射反思 Hook：工具执行完毕
-                _emit_hook("tool_end", sid,
-                           tool_name=tool_name, tool_args=tool_args,
-                           result_str=result_str)
-
         if iterations >= max_iterations:
             logger.warning("Executor 达到最大迭代次数 (%d)", max_iterations)
 
@@ -174,9 +169,6 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> dict[str, 
         logger.error("步骤 %d 执行失败: %s", step_index + 1, e, exc_info=True)
 
     logger.info("[%s] Executor 结束: step_status=%s, iterations=%d", sid, step_status, iterations)
-
-    # 发射反思 Hook：一轮 ReAct 循环结束
-    _emit_hook("turn_end", sid)
 
     # 标记步骤最终状态
     pending_events.append({
@@ -227,17 +219,3 @@ def _build_executor_prompt(
 请专注完成当前步骤。完成后简要总结结果。"""
 
 
-def _emit_hook(event: str, session_id: str, **kwargs) -> None:
-    """发射反思 Hook 事件（不阻塞主流程）
-
-    通过 ReflectionDispatcher 将事件分发给所有匹配的反思策略。
-    任何异常都不影响主流程。
-    """
-    from config import settings as _settings
-    if not _settings.memory_reflection_enabled:
-        return
-    try:
-        from memory.reflection_dispatcher import reflection_dispatcher
-        reflection_dispatcher.emit(event, session_id, **kwargs)
-    except Exception:
-        pass  # 非致命，不影响主流程

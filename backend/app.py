@@ -232,29 +232,6 @@ async def chat(request: ChatRequest):
     # Save user message
     session_manager.save_message(request.session_id, "user", request.message)
 
-    # 检测用户纠正（异步，不阻塞主流程）
-    if settings.memory_reflection_enabled:
-        try:
-            from memory.reflector import detect_user_correction, process_user_correction
-            correction = detect_user_correction(request.message)
-            if correction:
-                # 获取前一次工具调用（从会话历史中查找）
-                prev_history = session_manager.get_session(request.session_id)
-                previous_tool_call = None
-                for msg in reversed(prev_history[:-1]):
-                    if msg.get("tool_calls"):
-                        calls = msg["tool_calls"]
-                        if calls:
-                            previous_tool_call = calls[-1] if isinstance(calls, list) else calls
-                        break
-                asyncio.create_task(process_user_correction(
-                    request.message,
-                    previous_tool_call=previous_tool_call,
-                    session_id=request.session_id,
-                ))
-        except Exception as e:
-            logger.debug(f"User correction detection skipped: {e}")
-
     # Get session history (exclude the message we just saved, it's already in the input)
     history = session_manager.get_session(request.session_id)[:-1]
 
@@ -318,6 +295,13 @@ async def chat(request: ChatRequest):
             tool_calls=tool_calls_log if tool_calls_log else None,
             segments=segments_log_ns if segments_log_ns else None,
         )
+
+        # 会话反思（非流式路径）
+        if settings.memory_session_reflect_enabled:
+            try:
+                asyncio.create_task(_do_session_reflect(request.session_id, tool_calls_log))
+            except Exception as e:
+                logger.warning(f"Session reflect hook failed (non-stream): {e}")
 
         return {
             "response": full_response,
@@ -460,13 +444,12 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                     )
                     saved_via_done = True
 
-                # 自动提取记忆
-                if settings.memory_auto_extract:
+                # 会话反思：1 次 LLM 调用完成记忆提取+整合
+                if settings.memory_session_reflect_enabled:
                     try:
-                        recent_messages = session_manager.get_session(session_id)[-6:]
-                        asyncio.create_task(memory_manager.auto_extract(recent_messages))
+                        asyncio.create_task(_do_session_reflect(session_id, tool_calls_log))
                     except Exception as e:
-                        logger.warning(f"Auto-extract hook failed: {e}")
+                        logger.warning(f"Session reflect hook failed: {e}")
                 break
 
     except Exception as e:
@@ -500,6 +483,18 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                 logger.info(f"已保存中断的 assistant 回复 (session={session_id}, len={len(full_response)})")
             except Exception as save_err:
                 logger.error(f"中断保存失败: {save_err}", exc_info=True)
+
+
+async def _do_session_reflect(session_id: str, tool_calls_log: list) -> None:
+    """后台执行会话反思（1 次 LLM 调用）"""
+    try:
+        from memory.session_reflector import reflect_on_session, execute_reflect_results
+        recent_messages = session_manager.get_session(session_id)[-10:]
+        results = await reflect_on_session(recent_messages, tool_calls_log, session_id)
+        if results:
+            await execute_reflect_results(results, session_id)
+    except Exception as e:
+        logger.warning(f"Session reflect failed: {e}")
 
 
 # ============================================
@@ -1326,13 +1321,12 @@ class SettingsUpdateRequest(BaseModel):
     cache_max_memory_items: Optional[int] = None
     cache_max_disk_size_mb: Optional[int] = None
     # Memory configuration
-    memory_auto_extract: Optional[bool] = None
+    memory_session_reflect_enabled: Optional[bool] = None
     memory_daily_log_days: Optional[int] = None
     memory_max_prompt_tokens: Optional[int] = None
     memory_index_enabled: Optional[bool] = None
     # Memory v2 configuration
     memory_consolidation_enabled: Optional[bool] = None
-    memory_reflection_enabled: Optional[bool] = None
     memory_archive_days: Optional[int] = None
     memory_delete_days: Optional[int] = None
     memory_decay_lambda: Optional[float] = None
@@ -1465,13 +1459,12 @@ async def get_settings():
         "cache_max_memory_items": int(env.get("CACHE_MAX_MEMORY_ITEMS", "100")),
         "cache_max_disk_size_mb": int(env.get("CACHE_MAX_DISK_SIZE_MB", "5120")),
         # Memory configuration
-        "memory_auto_extract": env.get("MEMORY_AUTO_EXTRACT", "false").lower() == "true",
+        "memory_session_reflect_enabled": env.get("MEMORY_SESSION_REFLECT_ENABLED", "true").lower() == "true",
         "memory_daily_log_days": int(env.get("MEMORY_DAILY_LOG_DAYS", "2")),
         "memory_max_prompt_tokens": int(env.get("MEMORY_MAX_PROMPT_TOKENS", "4000")),
         "memory_index_enabled": env.get("MEMORY_INDEX_ENABLED", "true").lower() == "true",
         # Memory v2 configuration
         "memory_consolidation_enabled": env.get("MEMORY_CONSOLIDATION_ENABLED", "true").lower() == "true",
-        "memory_reflection_enabled": env.get("MEMORY_REFLECTION_ENABLED", "true").lower() == "true",
         "memory_archive_days": int(env.get("MEMORY_ARCHIVE_DAYS", "30")),
         "memory_delete_days": int(env.get("MEMORY_DELETE_DAYS", "60")),
         "memory_decay_lambda": float(env.get("MEMORY_DECAY_LAMBDA", "0.05")),
@@ -1530,13 +1523,12 @@ async def update_settings(request: SettingsUpdateRequest):
         "CACHE_MAX_MEMORY_ITEMS": str(request.cache_max_memory_items) if request.cache_max_memory_items is not None else None,
         "CACHE_MAX_DISK_SIZE_MB": str(request.cache_max_disk_size_mb) if request.cache_max_disk_size_mb is not None else None,
         # Memory configuration
-        "MEMORY_AUTO_EXTRACT": str(request.memory_auto_extract).lower() if request.memory_auto_extract is not None else None,
+        "MEMORY_SESSION_REFLECT_ENABLED": str(request.memory_session_reflect_enabled).lower() if request.memory_session_reflect_enabled is not None else None,
         "MEMORY_DAILY_LOG_DAYS": str(request.memory_daily_log_days) if request.memory_daily_log_days is not None else None,
         "MEMORY_MAX_PROMPT_TOKENS": str(request.memory_max_prompt_tokens) if request.memory_max_prompt_tokens is not None else None,
         "MEMORY_INDEX_ENABLED": str(request.memory_index_enabled).lower() if request.memory_index_enabled is not None else None,
         # Memory v2 configuration
         "MEMORY_CONSOLIDATION_ENABLED": str(request.memory_consolidation_enabled).lower() if request.memory_consolidation_enabled is not None else None,
-        "MEMORY_REFLECTION_ENABLED": str(request.memory_reflection_enabled).lower() if request.memory_reflection_enabled is not None else None,
         "MEMORY_ARCHIVE_DAYS": str(request.memory_archive_days) if request.memory_archive_days is not None else None,
         "MEMORY_DELETE_DAYS": str(request.memory_delete_days) if request.memory_delete_days is not None else None,
         "MEMORY_DECAY_LAMBDA": str(request.memory_decay_lambda) if request.memory_decay_lambda is not None else None,

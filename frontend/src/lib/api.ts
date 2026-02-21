@@ -359,7 +359,7 @@ export interface SettingsData {
   translate_api_base: string;
   translate_model: string;
   // Memory configuration
-  memory_auto_extract: boolean;
+  memory_session_reflect_enabled: boolean;
   memory_daily_log_days: number;
   memory_max_prompt_tokens: number;
   memory_index_enabled: boolean;
@@ -626,7 +626,7 @@ export interface MemoryStats {
   daily_logs_count: number;
   memory_file_size: number;
   daily_log_days: number;
-  auto_extract_enabled: boolean;
+  session_reflect_enabled: boolean;
   avg_salience?: number;  // 平均重要性
   version?: number;       // 记忆系统版本
 }
@@ -737,15 +737,6 @@ export async function fetchRollingSummary(): Promise<string> {
   if (!res.ok) throw new Error("Failed to fetch rolling summary");
   const data = await res.json();
   return data.summary || "";
-}
-
-export async function fetchProceduralMemories(tool?: string): Promise<MemoryEntry[]> {
-  const params = new URLSearchParams();
-  if (tool) params.set("tool", tool);
-  const res = await fetch(`${API_BASE}/api/memory/procedural?${params}`);
-  if (!res.ok) throw new Error("Failed to fetch procedural memories");
-  const data = await res.json();
-  return data.entries || [];
 }
 
 // ============================================

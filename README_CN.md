@@ -303,7 +303,7 @@ vibeworker/
 │   │   ├── manager.py             # 核心管理器（CRUD、统计）
 │   │   ├── search.py              # 搜索（向量+关键词+衰减）
 │   │   ├── consolidator.py        # 智能整合
-│   │   ├── reflector.py           # 反思记忆提取
+│   │   ├── session_reflector.py   # 会话级反思
 │   │   └── archiver.py            # 日志归档
 │   ├── tools/                     # 8 个 Core Tools
 │   ├── cache/                     # L1+L2 缓存系统

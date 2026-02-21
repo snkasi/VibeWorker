@@ -115,11 +115,6 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict[str, Any
             messages.append(ToolMessage(content=result_str, tool_call_id=call_id))
             logger.info("[%s] Agent 工具执行: %s, 成功=%s", sid, tool_name, "[ERROR]" not in result_str)
 
-            # 发射反思 Hook：工具执行完毕
-            _emit_hook("tool_end", sid,
-                       tool_name=tool_name, tool_args=tool_args,
-                       result_str=result_str)
-
             # 检测 plan_create → 解析计划数据
             if tool_name == "plan_create" and "[ERROR]" not in result_str:
                 plan_data = _parse_plan_from_tool_result(result_str, tool_args)
@@ -134,9 +129,6 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> dict[str, Any
 
     if iterations >= max_iterations:
         logger.warning("[%s] Agent 达到最大迭代次数 (%d)，强制终止", sid, max_iterations)
-
-    # 发射反思 Hook：一轮 ReAct 循环结束
-    _emit_hook("turn_end", sid)
 
     # 只返回新增的消息，避免 add_messages reducer 重复累积已有消息
     new_messages = messages[initial_message_count:]
@@ -199,17 +191,3 @@ def _parse_plan_from_tool_result(result_str: str, tool_args: dict) -> dict | Non
         return None
 
 
-def _emit_hook(event: str, session_id: str, **kwargs) -> None:
-    """发射反思 Hook 事件（不阻塞主流程）
-
-    通过 ReflectionDispatcher 将事件分发给所有匹配的反思策略。
-    任何异常都不影响主流程。
-    """
-    from config import settings as _settings
-    if not _settings.memory_reflection_enabled:
-        return
-    try:
-        from memory.reflection_dispatcher import reflection_dispatcher
-        reflection_dispatcher.emit(event, session_id, **kwargs)
-    except Exception:
-        pass  # 非致命，不影响主流程
