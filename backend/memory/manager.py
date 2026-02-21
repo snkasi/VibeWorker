@@ -112,6 +112,13 @@ class MemoryManager:
             encoding="utf-8",
         )
 
+        # 记忆变更后使 prompt 缓存失效，避免下次对话使用过时的记忆数据
+        try:
+            from cache import prompt_cache
+            prompt_cache.clear()
+        except Exception:
+            pass
+
     def read_memory(self) -> str:
         """读取记忆内容（返回人类可读格式，用于 System Prompt）
 
@@ -626,79 +633,9 @@ class MemoryManager:
             "daily_logs_count": len(logs),
             "memory_file_size": memory_size,
             "daily_log_days": settings.memory_daily_log_days,
-            "auto_extract_enabled": settings.memory_auto_extract,
+            "session_reflect_enabled": settings.memory_session_reflect_enabled,
             "version": data.get("version", 1),
         }
-
-    # ============================================
-    # 自动提取
-    # ============================================
-
-    async def auto_extract(self, messages: list[dict]) -> None:
-        """从近期消息中自动提取关键信息
-
-        委托给 extractor.py 的 process_message_for_memory 实现，
-        支持 JSON 格式输出、salience 评分、显式记忆请求检测。
-        提取结果写入每日日志。
-        """
-        if not settings.memory_auto_extract:
-            return
-
-        try:
-            from memory.extractor import process_message_for_memory
-
-            # 取最近一条用户消息用于显式检测
-            last_user_msg = ""
-            for msg in reversed(messages):
-                if msg.get("role") == "user" and msg.get("content"):
-                    last_user_msg = msg["content"]
-                    break
-
-            if not last_user_msg and not messages:
-                return
-
-            # 使用 extractor 的综合提取（显式检测 + 隐式提取）
-            extracted = await process_message_for_memory(
-                message=last_user_msg,
-                role="user",
-                session_messages=messages,
-            )
-
-            if not extracted:
-                return
-
-            for item in extracted:
-                cat = item.get("category", "general")
-                content = item.get("content", "")
-                salience = item.get("salience", 0.5)
-
-                if not content:
-                    continue
-
-                # 写入每日日志（带分类和类型）
-                self.append_daily_log(
-                    content=content,
-                    log_type="auto_extract",
-                    category=cat,
-                )
-
-                # 高重要性（>=0.8）的记忆同时写入长期记忆
-                # 避免显式记忆请求（如"记住..."）只停留在日志中等 30 天才归档提升
-                if salience >= 0.8:
-                    try:
-                        self.add_entry(
-                            content=content,
-                            category=cat,
-                            salience=salience,
-                            source="auto_extract",
-                        )
-                    except Exception as e:
-                        logger.warning(f"自动提取写入长期记忆失败: {e}")
-
-                logger.info(f"自动提取: [{cat}] (salience={salience:.1f}) {content[:50]}...")
-
-        except Exception as e:
-            logger.error(f"自动提取失败: {e}")
 
 
 # 单例实例

@@ -15,12 +15,16 @@ from memory.models import VALID_CATEGORIES, CATEGORY_LABELS
 
 logger = logging.getLogger(__name__)
 
+# 整合操作的超时时间（秒）
+CONSOLIDATION_TIMEOUT = 30
+
 
 def _run_consolidation(content: str, category: str, salience: float) -> dict:
     """在同步上下文中运行异步整合逻辑
 
-    memory_write 是同步工具（@tool），而 consolidate_memory 是异步函数。
-    通过获取当前运行中的事件循环来桥接两者。
+    LangChain @tool 被 Agent 调用时处于同步上下文（即使外层是 async），
+    因此需要新线程 + asyncio.run() 来桥接。这种方式是安全的，因为新线程
+    中没有已存在的事件循环。
     """
     from memory.consolidator import consolidate_memory
 
@@ -32,12 +36,10 @@ def _run_consolidation(content: str, category: str, salience: float) -> dict:
             source="user_explicit",
         )
 
-    # LangChain 工具在 Agent 的异步上下文中被 ainvoke 调用，
-    # 此时已有运行中的事件循环，需要创建新线程来运行异步代码
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor() as pool:
         future = pool.submit(asyncio.run, _consolidate())
-        return future.result(timeout=30)
+        return future.result(timeout=CONSOLIDATION_TIMEOUT)
 
 
 @tool

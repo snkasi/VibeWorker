@@ -11,8 +11,7 @@
 - MemoryManager: 管理器类
 - MemoryEntry, MemoryMeta: 数据模型
 - VALID_CATEGORIES, CATEGORY_LABELS: 分类定义
-- extractor: 记忆提取器（显式检测 + 隐式提取）
-- reflector: 反思记忆提取器（工具失败分析 + 用户纠正检测）
+- session_reflector: 会话反思器（1 次 LLM 调用完成提取+反思+整合）
 """
 
 from memory.manager import MemoryManager, memory_manager
@@ -24,27 +23,9 @@ from memory.models import (
     VALID_CATEGORIES,
     CATEGORY_LABELS,
 )
-from memory.extractor import (
-    extract_memories_from_conversation,
-    detect_explicit_memory_request,
-    process_message_for_memory,
-)
-from memory.reflector import (
-    record_tool_failure,
-    detect_user_correction,
-    process_user_correction,
-)
-from memory.reflection_strategies import (
-    HookEvent,
-    HookContext,
-    ToolCallRecord,
-    ReflectionStrategy,
-    ToolFailureStrategy,
-    RepeatedToolStrategy,
-)
-from memory.reflection_dispatcher import (
-    ReflectionDispatcher,
-    reflection_dispatcher,
+from memory.session_reflector import (
+    reflect_on_session,
+    execute_reflect_results,
 )
 
 __all__ = [
@@ -56,19 +37,7 @@ __all__ = [
     "DailyLogEntry",
     "VALID_CATEGORIES",
     "CATEGORY_LABELS",
-    "extract_memories_from_conversation",
-    "detect_explicit_memory_request",
-    "process_message_for_memory",
-    "record_tool_failure",
-    "detect_user_correction",
-    "process_user_correction",
-    # 反思策略框架
-    "HookEvent",
-    "HookContext",
-    "ToolCallRecord",
-    "ReflectionStrategy",
-    "ToolFailureStrategy",
-    "RepeatedToolStrategy",
-    "ReflectionDispatcher",
-    "reflection_dispatcher",
+    # 会话反思器
+    "reflect_on_session",
+    "execute_reflect_results",
 ]

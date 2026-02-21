@@ -7,6 +7,7 @@
 """
 import logging
 import math
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -20,6 +21,8 @@ _memory_index = None
 _memory_query_engine = None
 # 索引脏标记：增删改操作后设为 True，下次构建时清除持久化缓存强制重建
 _index_dirty = False
+# 索引操作的线程锁，防止搜索和写入之间的竞争条件
+_index_lock = threading.Lock()
 
 
 def compute_relevance(
@@ -74,6 +77,14 @@ def build_or_load_memory_index():
 
     if not settings.memory_index_enabled:
         return
+
+    with _index_lock:
+        return _build_or_load_memory_index_locked()
+
+
+def _build_or_load_memory_index_locked():
+    """构建或加载索引的内部实现（需在 _index_lock 内调用）"""
+    global _memory_index, _memory_query_engine, _index_dirty
 
     try:
         from llama_index.core import (
@@ -294,16 +305,20 @@ def search_memories(
         - category: 分类（可选）
         - salience: 重要性（可选）
     """
-    global _memory_query_engine
+    # 尝试向量搜索：先在锁内获取引擎引用，再在锁外执行查询
+    query_engine = None
+    with _index_lock:
+        query_engine = _memory_query_engine
 
-    # 尝试向量搜索
-    if _memory_query_engine is not None or settings.memory_index_enabled:
-        if _memory_query_engine is None:
+    if query_engine is not None or settings.memory_index_enabled:
+        if query_engine is None:
             build_or_load_memory_index()
+            with _index_lock:
+                query_engine = _memory_query_engine
 
-        if _memory_query_engine is not None:
+        if query_engine is not None:
             try:
-                response = _memory_query_engine.query(query)
+                response = query_engine.query(query)
                 if hasattr(response, "source_nodes") and response.source_nodes:
                     results = []
                     now = datetime.now()
@@ -369,22 +384,24 @@ def rebuild_memory_index() -> str:
     """强制重建记忆搜索索引"""
     global _memory_index, _memory_query_engine
 
-    # 清除现有索引
-    _memory_index = None
-    _memory_query_engine = None
+    with _index_lock:
+        # 清除现有索引
+        _memory_index = None
+        _memory_query_engine = None
 
-    # 删除持久化目录
-    persist_dir = settings.storage_dir / "memory_index"
-    if persist_dir.exists():
-        import shutil
-        shutil.rmtree(persist_dir)
-        logger.info("已删除旧的记忆索引")
+        # 删除持久化目录
+        persist_dir = settings.storage_dir / "memory_index"
+        if persist_dir.exists():
+            import shutil
+            shutil.rmtree(persist_dir)
+            logger.info("已删除旧的记忆索引")
 
-    # 重建
+    # 重建（build_or_load_memory_index 内部自带 _index_lock）
     build_or_load_memory_index()
 
-    if _memory_index is not None:
-        return "✅ 记忆索引重建成功"
+    with _index_lock:
+        if _memory_index is not None:
+            return "✅ 记忆索引重建成功"
     return "⚠️ 没有记忆文档需要索引"
 
 
@@ -440,6 +457,7 @@ def invalidate_memory_index() -> None:
     清除持久化目录后从头构建，而不是从磁盘加载过时的旧索引。
     """
     global _memory_index, _memory_query_engine, _index_dirty
-    _memory_index = None
-    _memory_query_engine = None
-    _index_dirty = True
+    with _index_lock:
+        _memory_index = None
+        _memory_query_engine = None
+        _index_dirty = True

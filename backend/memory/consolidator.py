@@ -59,7 +59,7 @@ async def decide_consolidation(
     # 使用 LLM 决策
     try:
         from engine.llm_factory import create_llm
-        llm = create_llm()
+        llm = create_llm(streaming=False)
 
         # 构建相似记忆列表
         similar_list = "\n".join([
@@ -93,10 +93,9 @@ async def decide_consolidation(
         # 解析响应
         import json
         try:
-            # 清理 markdown 标记
-            if result.startswith("```"):
-                lines = result.split("\n")
-                result = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+            # 从可能的 markdown 代码块中提取 JSON
+            from memory.session_reflector import _extract_json
+            result = _extract_json(result)
 
             data = json.loads(result)
             decision = data.get("decision", "NOOP").upper()

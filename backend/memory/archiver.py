@@ -14,10 +14,6 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# 默认归档配置
-DEFAULT_ARCHIVE_DAYS = 30
-DEFAULT_DELETE_DAYS = 60
-
 
 async def summarize_daily_log(date: str) -> Optional[str]:
     """为每日日志生成摘要
@@ -36,7 +32,7 @@ async def summarize_daily_log(date: str) -> Optional[str]:
 
     try:
         from engine.llm_factory import create_llm
-        llm = create_llm()
+        llm = create_llm(streaming=False)
 
         prompt = f"""请为以下每日日志生成简洁摘要（100字以内），提取关键事件和发现。
 
@@ -182,9 +178,9 @@ async def cleanup_old_logs(
     from memory.manager import memory_manager
 
     if archive_days is None:
-        archive_days = DEFAULT_ARCHIVE_DAYS
+        archive_days = settings.memory_archive_days
     if delete_days is None:
-        delete_days = DEFAULT_DELETE_DAYS
+        delete_days = settings.memory_delete_days
 
     today = datetime.now()
     archive_threshold = today - timedelta(days=archive_days)
