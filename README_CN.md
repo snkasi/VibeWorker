@@ -5,7 +5,7 @@
 <h1 align="center">VibeWorker 超级数字员工</h1>
 
 <p align="center">
-  <strong>拥有真实记忆的本地 AI 数字员工</strong>
+  <strong>能记忆、能学习、不断进化的本地 AI 数字员工</strong>
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 ---
 
-VibeWorker 是一个基于 Python 的轻量级本地 AI Agent 系统。文件即记忆、技能即插件、透明可控。它拥有"真实记忆"，可以帮助你处理各类任务——信息检索、数据处理、代码执行、文件管理等。
+VibeWorker 是一个基于 Python 的轻量级本地 AI Agent 系统。文件即记忆、技能即插件、透明可控。它能记住你的偏好和历史，通过插件式技能不断学习新能力，帮你处理各类任务——信息检索、数据处理、代码执行、文件管理等。
 
 ## 核心特性
 

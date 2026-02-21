@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import Optional
 import logging
+import platform
 
 from config import settings, PROJECT_ROOT, read_text_smart
 
@@ -16,6 +17,51 @@ def _read_file_safe(path: Path, max_chars: Optional[int] = None) -> str:
     if max_chars and len(content) > max_chars:
         content = content[:max_chars] + "\n\n...[truncated]"
     return content
+
+
+def _detect_os_description() -> str:
+    """检测当前操作系统，返回人类可读的描述字符串。
+
+    例如：'Windows 10 (10.0.19045)'、'macOS 14.2 (arm64)'、'Linux Ubuntu 22.04 (x86_64)'
+    帮助 Agent 在生成命令和脚本时使用正确的语法（如路径分隔符、Shell 命令等）。
+    """
+    system = platform.system()  # 'Windows' / 'Darwin' / 'Linux'
+    machine = platform.machine()  # 'AMD64' / 'arm64' / 'x86_64'
+
+    if system == "Windows":
+        # platform.version() 返回如 '10.0.19045'
+        version = platform.version()
+        release = platform.release()  # '10' / '11'
+        return f"Windows {release} ({version}, {machine})"
+
+    elif system == "Darwin":
+        # macOS 版本
+        mac_ver = platform.mac_ver()[0]  # 如 '14.2.1'
+        return f"macOS {mac_ver} ({machine})" if mac_ver else f"macOS ({machine})"
+
+    elif system == "Linux":
+        # 尝试读取发行版信息
+        try:
+            import distro
+            distro_name = distro.name(pretty=True)  # 如 'Ubuntu 22.04.3 LTS'
+        except ImportError:
+            # 回退：尝试读取 /etc/os-release
+            distro_name = ""
+            try:
+                with open("/etc/os-release") as f:
+                    for line in f:
+                        if line.startswith("PRETTY_NAME="):
+                            distro_name = line.split("=", 1)[1].strip().strip('"')
+                            break
+            except Exception:
+                pass
+        kernel = platform.release()  # 内核版本
+        if distro_name:
+            return f"Linux {distro_name} (kernel {kernel}, {machine})"
+        return f"Linux (kernel {kernel}, {machine})"
+
+    else:
+        return f"{system} {platform.release()} ({machine})"
 
 
 def generate_skills_snapshot() -> str:
@@ -144,9 +190,12 @@ def build_system_prompt() -> str:
 
     # 5.5 Workspace Info（包含动态占位符 {{SESSION_ID}} 和 {{WORKING_DIR}}，由 runner 替换）
     data_path = settings.get_data_path()
+    os_desc = _detect_os_description()
     parts.append(
         f"<!-- WORKSPACE_INFO -->\n"
         f"## 环境信息\n"
+        f"- **操作系统**: {os_desc}\n"
+        f"  - 请根据操作系统使用正确的命令语法、路径格式和 Shell 特性\n"
         f"- **当前会话 ID**: `{{{{SESSION_ID}}}}`\n"
         f"- **工作目录**: `{{{{WORKING_DIR}}}}`\n"
         f"  - 所有工具（terminal、python_repl）的当前工作目录\n"

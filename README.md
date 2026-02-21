@@ -5,7 +5,7 @@
 <h1 align="center">VibeWorker</h1>
 
 <p align="center">
-  <strong>Your Local AI Digital Worker with Real Memory</strong>
+  <strong>A Local AI Worker that Remembers, Learns, and Evolves</strong>
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 ---
 
-VibeWorker is a lightweight, local-first AI Agent system built with Python. It features **file-based memory**, **plugin-style skills**, and **full transparency** — everything the agent thinks, remembers, and does is visible and editable.
+VibeWorker is a lightweight, local-first AI Agent system built with Python. It features **file-based memory**, **plugin-style skills**, and **full transparency**. It remembers your preferences and history, continuously learns new capabilities through pluggable skills, and helps you tackle any task — from information retrieval and data processing to code execution and file management.
 
 ## Highlights
 
