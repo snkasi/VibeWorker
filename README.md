@@ -13,6 +13,7 @@
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python" /></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-14%2B-black.svg" alt="Next.js" /></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green.svg" alt="MCP" /></a>
+  <img src="https://img.shields.io/tokei/lines/github/EntropyFlux/VibeWorker" alt="Lines of code" />
 </p>
 
 <p align="center">
