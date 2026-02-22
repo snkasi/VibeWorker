@@ -39,7 +39,7 @@ async def summarizer_node(state: AgentState, config: RunnableConfig) -> dict[str
 
 {steps_summary}
 
-请根据以上执行结果，生成一个总结报告给用户。如果有失败的步骤，额外说明原因和建议。"""
+请根据以上执行结果，生成一个主要面向用户的总结报告。如果有比较关键的任务未最最终完成目标，额外说明原因和建议。"""
     )
 
     logger.info("[%s] 计划总结: plan_id=%s, 步骤数=%d", sid, plan_id, len(past_steps))

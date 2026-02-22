@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Square, Sparkles, Zap, ChevronRight, ChevronDown } from "lucide-react";
+import { Send, Square, Sparkles, Zap, ChevronRight, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -129,27 +129,25 @@ function wrapAsCodeBlock(code: string, lang = ""): string {
 /**
  * 计算 segments 的折叠分割点。
  * 返回最终回答起始的 segment 索引，如果不需要折叠则返回 -1。
- * 规则：最后一个 tool segment 之后的第一个有内容的 text segment 即为最终回答的起始。
+ *
+ * 规则：从末尾向前找最后一个有内容的 text segment 作为最终回答。
+ * 这样在 Plan 模式下（summarizer → agent 生成总结），
+ * 中间过程的文本和工具调用都会被折叠，只展示最终总结。
  */
 function getFinalAnswerIndex(segments: MessageSegment[]): number {
-    // 找到最后一个 tool segment 的索引
-    let lastToolIdx = -1;
+    // 至少要有一个 tool segment 才需要折叠
+    const hasTools = segments.some(s => s.type === "tool");
+    if (!hasTools) return -1;
+    // 从末尾往前找最后一个有内容的 text segment
     for (let i = segments.length - 1; i >= 0; i--) {
-        if (segments[i].type === "tool") {
-            lastToolIdx = i;
+        const seg = segments[i];
+        if (seg.type === "text" && seg.content?.trim()) {
+            // 确保它前面确实有需要折叠的内容（至少有一个 tool 在它之前）
+            const hasToolBefore = segments.slice(0, i).some(s => s.type === "tool");
+            if (hasToolBefore) return i;
             break;
         }
     }
-    // 没有工具调用，不需要折叠
-    if (lastToolIdx === -1) return -1;
-    // 最后一个 tool 之后是否有文本 segment
-    for (let i = lastToolIdx + 1; i < segments.length; i++) {
-        const seg = segments[i];
-        if (seg.type === "text" && seg.content) {
-            return i; // 这是最终回答的起始
-        }
-    }
-    // 最后一个 tool 之后没有文本，不折叠
     return -1;
 }
 
@@ -314,11 +312,39 @@ export default function ChatPanel({
         });
     };
 
+    // 正在播放收起动画的消息索引
+    const [collapsingProcesses, setCollapsingProcesses] = useState<Set<number>>(new Set());
+    // 折叠按钮 ref，收起后用于滚动定位
+    const processToggleRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
     const toggleProcessExpand = (msgIndex: number) => {
         setExpandedProcesses((prev) => {
             const next = new Set(prev);
-            if (next.has(msgIndex)) next.delete(msgIndex);
-            else next.add(msgIndex);
+            if (next.has(msgIndex)) {
+                // 收起：先播放动画，动画结束后再真正隐藏
+                setCollapsingProcesses((cp) => new Set(cp).add(msgIndex));
+                setTimeout(() => {
+                    setExpandedProcesses((p) => {
+                        const n = new Set(p);
+                        n.delete(msgIndex);
+                        return n;
+                    });
+                    setCollapsingProcesses((cp) => {
+                        const n = new Set(cp);
+                        n.delete(msgIndex);
+                        return n;
+                    });
+                    // 收起后滚动到折叠按钮位置，保持用户视野稳定
+                    requestAnimationFrame(() => {
+                        processToggleRefs.current.get(msgIndex)?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "nearest",
+                        });
+                    });
+                }, 250);
+            } else {
+                next.add(msgIndex);
+            }
             return next;
         });
     };
@@ -450,7 +476,7 @@ export default function ChatPanel({
                                         return shouldCollapse ? (
                                             <>
                                                 {/* 中间过程：可折叠区域 */}
-                                                <div className="mb-2">
+                                                <div className="mb-2" ref={(el) => { if (el) processToggleRefs.current.set(i, el); }}>
                                                     <div
                                                         className="flex items-center gap-2 px-3 py-2 rounded-xl border border-border/50 bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors"
                                                         onClick={() => toggleProcessExpand(i)}
@@ -461,12 +487,21 @@ export default function ChatPanel({
                                                             <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
                                                         )}
                                                         <span className="text-xs text-muted-foreground">
-                                                            🔄 执行了 {toolCount} 个步骤
+                                                            🔄 已经帮您隐藏了 {toolCount} 个过程输出信息
                                                         </span>
                                                     </div>
                                                     {isProcessExpanded && (
-                                                        <div className="mt-1 pl-2 border-l-2 border-border/30 animate-fade-in-up">
-                                                            {msg.segments.slice(0, finalIdx).map((seg, j) => renderSegment(seg, j))}
+                                                        <div className={`mt-1 rounded-xl bg-muted border border-border/60 overflow-hidden ${collapsingProcesses.has(i) ? "animate-collapse-up" : "animate-fade-in-up"}`}>
+                                                            <div className="pl-3 pr-2 py-2">
+                                                                {msg.segments.slice(0, finalIdx).map((seg, j) => renderSegment(seg, j))}
+                                                            </div>
+                                                            <div
+                                                                className="flex items-center justify-center gap-1.5 px-3 py-1.5 border-t border-border/40 cursor-pointer hover:bg-muted/50 transition-colors"
+                                                                onClick={() => toggleProcessExpand(i)}
+                                                            >
+                                                                <ChevronUp className="w-3 h-3 text-muted-foreground/50" />
+                                                                <span className="text-xs text-muted-foreground/60">隐藏过程输出信息</span>
+                                                            </div>
                                                         </div>
                                                     )}
                                                 </div>

@@ -219,6 +219,27 @@
   animation: fadeInUp 0.3s ease-out forwards;
 }
 
+@keyframes collapseUp {
+  from {
+    opacity: 1;
+    max-height: 2000px;
+    transform: scaleY(1);
+    transform-origin: top;
+  }
+
+  to {
+    opacity: 0;
+    max-height: 0;
+    transform: scaleY(0);
+    transform-origin: top;
+  }
+}
+
+.animate-collapse-up {
+  animation: collapseUp 0.25s ease-in forwards;
+  overflow: hidden;
+}
+
 .animate-slide-in-left {
   animation: slideInLeft 0.25s ease-out forwards;
 }

@@ -137,7 +137,7 @@ function extractLastLine(text: string, maxLen: number = 35): string {
   if (line.length < 8 && lines.length >= 2) {
     line = lines[lines.length - 2]?.trim() || "";
   } 
-  return line.length > maxLen ? line.slice(0, maxLen) + "..." : line;
+  return line.length > maxLen ? line.slice(0, maxLen) + "..." : line + ".." ;
 }
 
 // ============================================
@@ -429,6 +429,14 @@ class SessionStore {
           }
 
           case "llm_start": {
+            // 新一轮 LLM 调用开始时，截断当前 text segment，
+            // 使后续 token 写入新 segment。这样 summarizer → agent 的总结
+            // 会成为独立 segment，前端折叠逻辑才能正确识别最终回答。
+            const prevSeg = segments[segments.length - 1];
+            if (prevSeg && prevSeg.type === "text" && prevSeg.content?.trim()) {
+              // 插入一个空占位，下次 token 事件会新建 text segment
+              segments.push({ type: "text", content: "" });
+            }
             // 更新 plan 步骤活动描述：显示 LLM 正在思考 + 提示词末尾片段
             if (this.getState(sessionId).currentPlan) {
               // 重置节流计时，让 llm_start 描述至少显示 1s 再被 token 覆盖
