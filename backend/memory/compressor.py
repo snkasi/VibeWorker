@@ -23,8 +23,8 @@ from memory.models import MemoryEntry, VALID_CATEGORIES, CATEGORY_LABELS
 
 logger = logging.getLogger(__name__)
 
-# 聚类相似度阈值（0.80 可以合并"可以使用"和"曾使用"这类细微差异）
-CLUSTER_SIMILARITY_THRESHOLD = 0.80
+# 聚类相似度阈值（0.75 可以合并语义相近但表述不同的记忆）
+CLUSTER_SIMILARITY_THRESHOLD = 0.75
 
 # 批量合并的最大并发数（避免 LLM API 过载）
 MAX_MERGE_CONCURRENCY = 3
@@ -88,17 +88,16 @@ async def _cluster_by_similarity(
     entries: list[MemoryEntry],
     threshold: float = CLUSTER_SIMILARITY_THRESHOLD,
 ) -> list[list[MemoryEntry]]:
-    """基于向量相似度的贪婪聚类
+    """基于向量相似度的聚类
 
     算法：
     1. 计算所有记忆的 embedding
-    2. 贪婪聚类：遍历每条记忆，与已有聚类的中心比较
-       - 相似度 ≥ threshold → 加入该聚类
-       - 否则 → 创建新聚类
+    2. 计算两两相似度矩阵
+    3. 合并相似度 ≥ threshold 的记忆对
 
     Args:
         entries: 同分类的记忆条目列表
-        threshold: 相似度阈值（默认 0.85）
+        threshold: 相似度阈值
 
     Returns:
         聚类列表，每个聚类是一组相似的记忆
@@ -106,48 +105,57 @@ async def _cluster_by_similarity(
     if not entries:
         return []
 
+    n = len(entries)
+    logger.info(f"开始聚类 {n} 条记忆，阈值: {threshold}")
+
     # 获取所有 embedding
     embeddings: list[Optional[list[float]]] = []
     for entry in entries:
         emb = await get_embedding(entry.content)
+        if emb is None:
+            logger.warning(f"记忆 [{entry.id}] 获取 embedding 失败")
         embeddings.append(emb)
 
-    # 贪婪聚类: [(center_embedding, [entries])]
-    clusters: list[tuple[Optional[list[float]], list[MemoryEntry]]] = []
+    # 使用 Union-Find 进行聚类
+    parent = list(range(n))
 
-    for i, entry in enumerate(entries):
-        emb = embeddings[i]
+    def find(x: int) -> int:
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
 
-        # 如果无法获取 embedding，单独成一个聚类
-        if emb is None:
-            clusters.append((None, [entry]))
+    def union(x: int, y: int) -> None:
+        px, py = find(x), find(y)
+        if px != py:
+            parent[px] = py
+
+    # 计算两两相似度，合并相似的记忆
+    for i in range(n):
+        if embeddings[i] is None:
             continue
-
-        best_cluster_idx = None
-        best_sim = 0.0
-
-        for j, (center, _members) in enumerate(clusters):
-            if center is None:
+        for j in range(i + 1, n):
+            if embeddings[j] is None:
                 continue
-            sim = _cosine_similarity(emb, center)
-            # 调试日志：显示相似度计算结果
-            if sim >= 0.7:  # 只记录较高相似度的比较
-                logger.debug(
-                    f"相似度比较: [{entry.id}] vs cluster[{j}] = {sim:.3f} "
-                    f"(阈值: {threshold})"
+            sim = _cosine_similarity(embeddings[i], embeddings[j])
+            # 记录相似度较高的比较
+            if sim >= 0.6:
+                logger.info(
+                    f"相似度: [{entries[i].id}] vs [{entries[j].id}] = {sim:.3f} "
+                    f"{'✓ 合并' if sim >= threshold else '✗ 不合并'}"
                 )
-            if sim >= threshold and sim > best_sim:
-                best_cluster_idx = j
-                best_sim = sim
+            if sim >= threshold:
+                union(i, j)
 
-        if best_cluster_idx is not None:
-            # 加入已有聚类
-            clusters[best_cluster_idx][1].append(entry)
-        else:
-            # 创建新聚类
-            clusters.append((emb, [entry]))
+    # 按聚类分组
+    clusters_map: dict[int, list[MemoryEntry]] = {}
+    for i, entry in enumerate(entries):
+        root = find(i)
+        clusters_map.setdefault(root, []).append(entry)
 
-    return [members for _, members in clusters]
+    clusters = list(clusters_map.values())
+    logger.info(f"聚类完成: {n} 条记忆 → {len(clusters)} 个聚类")
+
+    return clusters
 
 
 def _extract_json(text: str) -> str:
