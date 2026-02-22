@@ -287,7 +287,7 @@ backend/memory/
 **compressor.py (压缩器)**
 - 手动触发：`POST /api/memory/compress` 或前端"整理记忆"按钮
 - 按分类分组记忆
-- 向量聚类（相似度 ≥ 0.85 归为一组）
+- 向量聚类（相似度 ≥ 0.80 归为一组）
 - LLM 合并同类记忆 + 重评 salience
 - 原子性更新 memory.json
 - 自动清除向量索引（确保后续搜索使用新数据）

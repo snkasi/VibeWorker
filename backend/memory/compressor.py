@@ -23,8 +23,8 @@ from memory.models import MemoryEntry, VALID_CATEGORIES, CATEGORY_LABELS
 
 logger = logging.getLogger(__name__)
 
-# 聚类相似度阈值
-CLUSTER_SIMILARITY_THRESHOLD = 0.85
+# 聚类相似度阈值（0.80 可以合并"可以使用"和"曾使用"这类细微差异）
+CLUSTER_SIMILARITY_THRESHOLD = 0.80
 
 # 批量合并的最大并发数（避免 LLM API 过载）
 MAX_MERGE_CONCURRENCY = 3
@@ -130,6 +130,12 @@ async def _cluster_by_similarity(
             if center is None:
                 continue
             sim = _cosine_similarity(emb, center)
+            # 调试日志：显示相似度计算结果
+            if sim >= 0.7:  # 只记录较高相似度的比较
+                logger.debug(
+                    f"相似度比较: [{entry.id}] vs cluster[{j}] = {sim:.3f} "
+                    f"(阈值: {threshold})"
+                )
             if sim >= threshold and sim > best_sim:
                 best_cluster_idx = j
                 best_sim = sim
@@ -302,6 +308,11 @@ async def compress_memories() -> dict:
     by_category: dict[str, list[MemoryEntry]] = {}
     for m in memories:
         by_category.setdefault(m.category, []).append(m)
+
+    # 调试日志：显示每个分类的记忆数量和 ID
+    for cat, entries in by_category.items():
+        ids = [e.id for e in entries]
+        logger.info(f"分类 [{cat}]: {len(entries)} 条记忆, IDs: {ids}")
 
     # 4. 对每个分类进行聚类 + 合并
     new_memories: list[MemoryEntry] = []
