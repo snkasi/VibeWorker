@@ -799,6 +799,18 @@ export default function MemoryPanel({
                                     <Tooltip>
                                         <TooltipTrigger asChild>
                                             <button
+                                                onClick={() => setShowCompressConfirm(true)}
+                                                disabled={isCompressing || (stats?.total_entries || 0) < 2}
+                                                className="px-1 py-0.5 text-[10px] rounded-full bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 transition-all disabled:opacity-50"
+                                            >
+                                                <Sparkles className={`w-3 h-3 ${isCompressing ? "animate-pulse" : ""}`} />
+                                            </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>整理记忆</TooltipContent>
+                                    </Tooltip>
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <button
                                                 onClick={() => setShowAddDialog(true)}
                                                 className="px-1.5 py-0.5 text-[10px] rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-all"
                                             >
@@ -874,21 +886,7 @@ export default function MemoryPanel({
                                 <div className="px-2 pt-2 pb-1 border-t border-border/30 mt-2">
                                     <div className="flex items-center justify-between text-[9px] text-muted-foreground/40">
                                         <span>{stats.total_entries} 条记忆</span>
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <button
-                                                    onClick={() => setShowCompressConfirm(true)}
-                                                    disabled={isCompressing || stats.total_entries < 2}
-                                                    className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                                >
-                                                    <Sparkles className="w-2.5 h-2.5" />
-                                                    <span>整理</span>
-                                                </button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>
-                                                合并相似记忆，重评重要性
-                                            </TooltipContent>
-                                        </Tooltip>
+                                        <span>v{stats.version || 2}</span>
                                     </div>
                                 </div>
                             )}
