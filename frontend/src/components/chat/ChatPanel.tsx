@@ -65,7 +65,6 @@ const TOOL_LABELS: Record<string, { label: string; icon: string }> = {
     memory_write: { label: "存储记忆", icon: "💾" },
     memory_search: { label: "搜索记忆", icon: "🧠" },
     plan_create: { label: "制定计划", icon: "📋" },
-    plan_update: { label: "更新进度", icon: "📊" },
 };
 
 function getToolDisplay(toolName: string) {

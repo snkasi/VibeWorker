@@ -13,7 +13,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from engine.llm_factory import get_llm
-from engine.state import AgentState
+from engine.state import AgentState, build_plan_steps
 
 logger = logging.getLogger(__name__)
 
@@ -168,23 +168,10 @@ def _parse_plan_from_tool_result(result_str: str, tool_args: dict) -> dict | Non
         title = tool_args.get("title", "")
         raw_steps = tool_args.get("steps", [])
 
-        # 标准化步骤
-        steps = []
-        for i, s in enumerate(raw_steps):
-            if isinstance(s, dict):
-                text = s.get("step") or s.get("title") or s.get("description") or str(next(iter(s.values()), ""))
-            else:
-                text = str(s)
-            steps.append({
-                "id": i + 1,
-                "title": text.strip(),
-                "status": "pending",
-            })
-
         return {
             "plan_id": plan_id,
             "title": title.strip(),
-            "steps": steps,
+            "steps": build_plan_steps(raw_steps),
         }
     except Exception as e:
         logger.warning("解析 plan_create 结果失败: %s", e)

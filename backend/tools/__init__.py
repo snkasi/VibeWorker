@@ -6,7 +6,7 @@ from tools.read_file_tool import create_read_file_tool
 from tools.rag_tool import create_rag_tool
 from tools.memory_write_tool import create_memory_write_tool
 from tools.memory_search_tool import create_memory_search_tool
-from tools.plan_tool import create_plan_create_tool, create_plan_update_tool
+from tools.plan_tool import create_plan_create_tool
 
 __all__ = [
     "create_terminal_tool",
@@ -17,7 +17,6 @@ __all__ = [
     "create_memory_write_tool",
     "create_memory_search_tool",
     "create_plan_create_tool",
-    "create_plan_update_tool",
     "get_executor_tools",
 ]
 
@@ -65,10 +64,9 @@ def get_all_tools() -> list:
 
     tools = _get_core_tools()
 
-    # Add Plan tools if enabled
+    # 添加 plan_create 工具（plan_update 已移除：executor 通过 pending_events 自动管理步骤状态）
     if getattr(settings, "plan_enabled", True):
         tools.append(create_plan_create_tool())
-        tools.append(create_plan_update_tool())
 
     tools = _append_mcp_tools(tools)
     tools = _wrap_security(tools)
@@ -76,13 +74,12 @@ def get_all_tools() -> list:
 
 
 def get_executor_tools() -> list:
-    """Return tools for task-mode Executor sub-agent.
+    """返回 Executor 子 Agent 的工具集。
 
-    Includes 7 Core Tools + plan_update (no plan_create) + MCP tools,
-    wrapped with security.
+    包含 7 个 Core Tools + MCP 工具（不含 plan_create / plan_update）。
+    步骤状态由 executor 节点通过 pending_events 自动管理，无需 plan_update 工具。
     """
     tools = _get_core_tools()
-    tools.append(create_plan_update_tool())
     tools = _append_mcp_tools(tools)
     tools = _wrap_security(tools)
     return tools

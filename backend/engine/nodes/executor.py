@@ -75,16 +75,19 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> dict[str, 
     )
 
     # 构建独立消息列表（不污染主 messages）
-    # 从主消息中提取原始用户消息作为上下文
-    original_user_messages = []
-    for msg in state.get("messages", []):
-        if isinstance(msg, HumanMessage):
-            original_user_messages.append(msg)
-        if len(original_user_messages) >= 3:
-            break
-
+    # 优先使用 plan_context（plan_gate 构建的完整上下文摘要），
+    # 包含用户请求 + Agent 阶段的工具调用结果，比单纯提取 HumanMessage 更完整
+    plan_context = state.get("plan_context", "")
     exec_messages = [SystemMessage(content=executor_prompt)]
-    exec_messages.extend(original_user_messages)
+    if plan_context:
+        exec_messages.append(SystemMessage(content=f"<!-- 任务背景 -->\n{plan_context}"))
+    else:
+        # 降级：无 plan_context 时从主消息中提取用户消息
+        for msg in state.get("messages", []):
+            if isinstance(msg, HumanMessage):
+                exec_messages.append(msg)
+            if len(exec_messages) >= 4:
+                break
     exec_messages.append(HumanMessage(content=f"执行步骤 {step_index + 1}: {step_title}"))
 
     # 运行 ReAct 循环

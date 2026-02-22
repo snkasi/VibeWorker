@@ -21,6 +21,9 @@ from engine.graph_builder import get_or_build_graph
 from engine.stream_adapter import stream_graph_events
 from engine.tool_resolver import resolve_tools, resolve_executor_tools
 
+# 延迟导入避免循环引用，在 _run_uncached 中使用
+_register_plan_approval_context = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -204,11 +207,20 @@ async def _run_uncached(message, session_history, ctx, mws):
             plan_info = _extract_interrupt_payload(interrupt_values)
 
             if plan_info:
+                plan_id = plan_info.get("plan_id", "")
+
+                # 注册审批队列到全局表，使 /api/plan/approve 端点能找到对应队列
+                global _register_plan_approval_context
+                if _register_plan_approval_context is None:
+                    from app import register_plan_approval_context as _reg
+                    _register_plan_approval_context = _reg
+                _register_plan_approval_context(plan_id, ctx.approval_queue)
+
                 # 发送审批请求 SSE 事件
                 yield events.build_plan_approval_request(plan_info)
 
                 # 阻塞等待审批（保持 SSE 流不断开）
-                approved = await _wait_for_approval(ctx, plan_info.get("plan_id", ""))
+                approved = await _wait_for_approval(ctx, plan_id)
                 logger.info("[%s] 审批结果: approved=%s", sid, approved)
 
                 # resume 图

@@ -53,7 +53,6 @@ TOOL_MOTIVATIONS = {
     "memory_write": "写入记忆",
     "fetch_url": "获取网页内容",
     "plan_create": "创建任务计划",
-    "plan_update": "更新任务计划",
 }
 
 

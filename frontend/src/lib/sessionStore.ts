@@ -329,7 +329,7 @@ class SessionStore {
 
             // Auto-advance plan steps when non-plan tools complete
             const toolName = event.tool || "";
-            if (toolName !== "plan_create" && toolName !== "plan_update") {
+            if (toolName !== "plan_create") {
               const plan = this.getState(sessionId).currentPlan;
               if (plan) {
                 const runningStep = plan.steps.find((s) => s.status === "running");

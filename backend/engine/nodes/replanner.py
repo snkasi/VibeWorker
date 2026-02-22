@@ -71,11 +71,11 @@ async def replanner_node(state: AgentState, config: RunnableConfig) -> dict[str,
         # 将剩余步骤标记为已完成（跳过）
         for i in range(step_index, len(steps)):
             s = steps[i]
-            sid = s["id"] if isinstance(s, dict) else i + 1
+            step_sid = s["id"] if isinstance(s, dict) else i + 1
             pending_events.append({
                 "type": "plan_updated",
                 "plan_id": plan_id,
-                "step_id": sid,
+                "step_id": step_sid,
                 "status": "completed",
             })
 
@@ -115,15 +115,33 @@ def _should_skip_replan(
     total: int,
     skip_on_success: bool,
 ) -> bool:
-    """启发式预检：常规情况下跳过 LLM Replan 调用。"""
-    # 仅剩 1 步 → 无需重规划
+    """启发式预检：常规情况下跳过 LLM Replan 调用。
+
+    核心逻辑：
+    - 最后一步失败时，即使仅剩 1 步也不跳过（需要 LLM 评估是否调整策略）
+    - 最后一步成功 + 仅剩 1 步 → 直接继续执行
+    - 最后一步成功 + 配置允许跳过 → 直接继续执行
+    """
+    # 检查最后一步是否包含错误
+    last_step_failed = False
+    if past_steps:
+        last_response = past_steps[-1][1]
+        # 匹配常见错误标识：[ERROR]、Exception、Traceback、failed
+        error_indicators = ["[ERROR]", "Exception:", "Traceback", "Error:", "failed"]
+        last_step_failed = any(indicator in last_response for indicator in error_indicators)
+
+    # 最后一步失败时，始终触发 LLM 评估（即使仅剩 1 步）
+    if last_step_failed:
+        return False
+
+    # 仅剩 1 步且上一步成功 → 无需重规划
     if total - step_index <= 1:
         return True
-    # 最后一步执行成功（无错误）且配置允许跳过 → 正常继续
-    if skip_on_success and past_steps:
-        last_response = past_steps[-1][1]
-        if "[ERROR]" not in last_response:
-            return True
+
+    # 上一步成功且配置允许跳过 → 正常继续
+    if skip_on_success:
+        return True
+
     return False
 
 

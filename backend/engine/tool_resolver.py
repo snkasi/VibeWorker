@@ -23,7 +23,7 @@ def resolve_tools(tool_spec: list[str], include_plan_create: bool = True) -> lis
     """
     from tools import (
         _get_core_tools, _append_mcp_tools, _wrap_security,
-        create_plan_create_tool, create_plan_update_tool,
+        create_plan_create_tool,
     )
 
     if not tool_spec:
@@ -37,7 +37,6 @@ def resolve_tools(tool_spec: list[str], include_plan_create: bool = True) -> lis
         tools = _get_core_tools()
         if include_plan_create:
             tools.append(create_plan_create_tool())
-        tools.append(create_plan_update_tool())
         tools = _append_mcp_tools(tools)
         return _wrap_security(tools)
 
@@ -56,8 +55,7 @@ def resolve_tools(tool_spec: list[str], include_plan_create: bool = True) -> lis
     if "plan" in spec_lower:
         if include_plan_create:
             tools.append(create_plan_create_tool())
-        tools.append(create_plan_update_tool())
-        tool_names_added.update(["plan_create", "plan_update"])
+        tool_names_added.add("plan_create")
 
     # 按具体工具名指定
     specific_names = [s for s in spec_lower if s not in ("core", "mcp", "plan", "all")]
@@ -65,7 +63,6 @@ def resolve_tools(tool_spec: list[str], include_plan_create: bool = True) -> lis
         all_available = _get_core_tools()
         if include_plan_create:
             all_available.append(create_plan_create_tool())
-        all_available.append(create_plan_update_tool())
         all_available = _append_mcp_tools(all_available)
 
         name_map = {t.name: t for t in all_available}

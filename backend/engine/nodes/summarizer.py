@@ -5,7 +5,7 @@
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from engine.state import AgentState
@@ -34,8 +34,8 @@ async def summarizer_node(state: AgentState, config: RunnableConfig) -> dict[str
         for i, (title, response) in enumerate(past_steps)
     )
 
-    summary_message = HumanMessage(
-        content=f"""[系统提示] 计划「{plan_title}」已执行完毕，以下是各步骤的执行结果：
+    summary_message = SystemMessage(
+        content=f"""计划「{plan_title}」已执行完毕，以下是各步骤的执行结果：
 
 {steps_summary}
 

@@ -25,6 +25,33 @@ class PlanData(TypedDict, total=False):
     steps: list[PlanStep]
 
 
+def normalize_step_text(step) -> str:
+    """标准化单个步骤：从各种格式（字符串 / dict）中提取步骤文本。
+
+    LLM 可能返回纯字符串 "读取文件"，也可能返回 dict 如 {"step": "读取文件"}。
+    此函数统一提取为纯文本。
+    """
+    if isinstance(step, dict):
+        return (
+            step.get("step")
+            or step.get("title")
+            or step.get("description")
+            or str(next(iter(step.values()), ""))
+        ).strip()
+    return str(step).strip()
+
+
+def build_plan_steps(raw_steps: list) -> list[PlanStep]:
+    """从 LLM 返回的原始步骤列表构建标准化的 PlanStep 列表。
+
+    将各种格式（字符串 / dict）统一转换为 PlanStep 结构。
+    """
+    return [
+        {"id": i + 1, "title": normalize_step_text(s), "status": "pending"}
+        for i, s in enumerate(raw_steps)
+    ]
+
+
 class AgentState(TypedDict, total=False):
     """统一的图状态 Schema。
 
@@ -52,6 +79,10 @@ class AgentState(TypedDict, total=False):
 
     # 侧通道 SSE 事件（plan_created/updated/revised 等）
     pending_events: Annotated[list[dict], operator.add]
+
+    # Agent 阶段上下文摘要（plan_gate 构建，executor 使用）
+    # 包含用户原始请求 + Agent 在创建计划前的工具调用结果摘要
+    plan_context: Optional[str]
 
     # 元数据（在图入口设置，整个流程共享）
     session_id: str

@@ -2,12 +2,14 @@
 
 plan_create 返回包含 plan_data 的 JSON 字符串，不再有副作用。
 agent_node 检测到 plan_create 调用后，解析返回值填充 state["plan_data"]。
-plan_update 保留给 executor 内的 LLM 调用。
+plan_update 保留但不再导出到 executor（步骤状态由 pending_events 自动管理）。
 """
 import logging
 from uuid import uuid4
 
 from langchain_core.tools import tool
+
+from engine.state import normalize_step_text
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +29,7 @@ def plan_create(title: str, steps: list) -> str:
         return "Error: Plan must have at least one step."
 
     # 标准化步骤：LLM 可能发送 dict 如 {"step": "..."} 而非纯字符串
-    normalized = []
-    for s in steps:
-        if isinstance(s, dict):
-            text = s.get("step") or s.get("title") or s.get("description") or str(next(iter(s.values()), ""))
-        else:
-            text = str(s)
-        normalized.append(text.strip())
+    normalized = [normalize_step_text(s) for s in steps]
 
     plan_id = uuid4().hex[:8]
 
