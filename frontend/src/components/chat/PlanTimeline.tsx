@@ -9,6 +9,8 @@ interface PlanTimelineProps {
   isLive?: boolean;
   /** 步骤开始时间戳（key: step_id, value: timestamp ms） */
   stepTimestamps?: Record<number, number>;
+  /** 当前 running 步骤的实时活动描述 */
+  stepActivity?: string;
 }
 
 /** 计算步骤耗时（秒） */
@@ -35,6 +37,7 @@ export default function PlanTimeline({
   steps,
   isLive,
   stepTimestamps = {},
+  stepActivity,
 }: PlanTimelineProps) {
   return (
     <div className="py-1">
@@ -46,6 +49,7 @@ export default function PlanTimeline({
           isLive={isLive}
           duration={getStepDuration(step, steps, stepTimestamps)}
           isRevised={!!(step as PlanStep & { _revised?: boolean })._revised}
+          activity={step.status === "running" ? stepActivity : undefined}
         />
       ))}
     </div>

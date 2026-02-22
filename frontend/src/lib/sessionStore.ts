@@ -51,6 +51,8 @@ export interface SessionState {
   planFadeOut: boolean;
   // 步骤开始时间戳，用于计算耗时（key: step_id, value: timestamp ms）
   planStepTimestamps: Record<number, number>;
+  // 当前 running 步骤的实时活动描述（如 "🌐 获取网页 sina.com..."）
+  planStepActivity: string;
   messagesLoaded: boolean;
   messagesLoading: boolean;
   debugCalls: DebugCall[];
@@ -70,10 +72,69 @@ function defaultState(): SessionState {
     currentPlan: null,
     planFadeOut: false,
     planStepTimestamps: {},
+    planStepActivity: "",
     messagesLoaded: false,
     messagesLoading: false,
     debugCalls: [],
   };
+}
+
+// ============================================
+// Plan 步骤活动描述辅助函数
+// ============================================
+
+/** 从工具名+输入 JSON 生成执行中的活动描述（如 "🌐 正在获取网页 sina.com..."） */
+function buildToolActivity(tool: string, input?: string): string {
+  const LABELS: Record<string, string> = {
+    read_file: "📄 正在读取文件",
+    fetch_url: "🌐 正在获取网页",
+    python_repl: "🐍 正在执行代码",
+    terminal: "💻 正在执行命令",
+    search_knowledge_base: "🔍 正在检索知识库",
+    memory_write: "💾 正在存储记忆",
+    memory_search: "🧠 正在搜索记忆",
+  };
+  let label = LABELS[tool]
+    || (tool.startsWith("mcp_") ? `🔌 正在调用 ${tool.split("_").slice(2).join("_")}` : `🔧 正在使用 ${tool}`);
+  // 从 JSON input 提取关键参数作为详情
+  if (input) {
+    try {
+      const p = JSON.parse(input);
+      let detail: string = p.url || p.file_path || p.path || p.command || p.query || "";
+      if (detail.length > 40) detail = detail.slice(0, 40) + "...";
+      if (detail) label += ` ${detail}`;
+    } catch { /* input 非 JSON，忽略 */ }
+  }
+  return label;
+}
+
+/** 工具执行完毕后，根据工具类型生成针对性的"分析中"描述 */
+function buildThinkingActivity(tool: string): string {
+  const MESSAGES: Record<string, string> = {
+    read_file: "💭 正在分析文件内容...",
+    fetch_url: "💭 正在分析获取的网页内容...",
+    python_repl: "💭 正在分析代码执行结果...",
+    terminal: "💭 正在分析命令执行结果...",
+    search_knowledge_base: "💭 正在分析检索结果...",
+    memory_write: "💭 记忆已保存，正在规划下一步...",
+    memory_search: "💭 正在分析搜索到的记忆...",
+  };
+  return MESSAGES[tool]
+    || (tool.startsWith("mcp_") ? "💭 正在分析工具返回的结果..." : "💭 正在规划下一步操作...");
+}
+
+/**
+ * 从文本中提取最后一个有意义的行（截取前 maxLen 个字符）。
+ * 支持 LLM 输入格式 "[Role]\n内容\n---\n[Role]\n内容" 和普通文本。
+ */
+function extractLastLine(text: string, maxLen: number = 35): string {
+  if (!text) return "";
+  // 按行分割，过滤空行和角色标记行（如 [SystemMessage]、[HumanMessage]）
+  const lines = text.split("\n").filter(
+    l => l.trim() && !l.trim().startsWith("[") && l.trim() !== "---"
+  );
+  const line = lines[lines.length - 1]?.trim() || "";
+  return line.length > maxLen ? line.slice(0, maxLen) + "..." : line;
 }
 
 // ============================================
@@ -87,6 +148,8 @@ class SessionStore {
   private onFirstMessageCallback: ((sessionId: string) => void) | null = null;
   // Session-level auto-approved tools (cleared when session ends or page refreshes)
   private sessionAllowedTools = new Map<string, Set<string>>();
+  // Plan 活动描述节流：记录每个 session 上次因 token 事件更新活动描述的时间戳
+  private lastTokenActivityTs = new Map<string, number>();
 
   // ---- State access ----
 
@@ -215,15 +278,33 @@ class SessionStore {
             } else {
               segments.push({ type: "text", content: event.content || "" });
             }
+            // 节流更新 plan 步骤活动描述（每 618ms 刷新，显示 LLM 最新输出片段）
+            const tokenActivityPatch: Partial<SessionState> = {};
+            if (this.getState(sessionId).currentPlan) {
+              const now = Date.now();
+              const lastTs = this.lastTokenActivityTs.get(sessionId) || 0;
+              if (now - lastTs >= 618) {
+                this.lastTokenActivityTs.set(sessionId, now);
+                const line = extractLastLine(fullContent, 35);
+                if (line) {
+                  tokenActivityPatch.planStepActivity = `✍️ ${line}`;
+                }
+              }
+            }
             this.updateSession(sessionId, {
               streamingContent: fullContent,
               streamingSegments: [...segments],
+              ...tokenActivityPatch,
             });
             break;
           }
 
           case "tool_start": {
             const currentSteps = this.getState(sessionId).thinkingSteps;
+            // 更新 plan 步骤活动描述（仅当有 plan 时）
+            const planActivityPatch: Partial<SessionState> = this.getState(sessionId).currentPlan
+              ? { planStepActivity: buildToolActivity(event.tool || "", event.input) }
+              : {};
             this.updateSession(sessionId, {
               thinkingSteps: [
                 ...currentSteps,
@@ -233,6 +314,7 @@ class SessionStore {
                   input: event.input,
                 },
               ],
+              ...planActivityPatch,
             });
             toolCalls.push({
               tool: event.tool || "",
@@ -333,11 +415,26 @@ class SessionStore {
               this.updateSession(sessionId, { debugCalls: calls });
             }
 
+            // 更新 plan 步骤活动描述：根据刚完成的工具类型生成针对性描述
+            if (this.getState(sessionId).currentPlan) {
+              this.updateSession(sessionId, {
+                planStepActivity: buildThinkingActivity(event.tool || ""),
+              });
+            }
             // 步骤状态完全由后端 plan_updated 事件驱动，不再在前端 auto-advance
             break;
           }
 
           case "llm_start": {
+            // 更新 plan 步骤活动描述：显示 LLM 正在思考 + 提示词末尾片段
+            if (this.getState(sessionId).currentPlan) {
+              // 重置节流计时，让 llm_start 描述至少显示 1s 再被 token 覆盖
+              this.lastTokenActivityTs.set(sessionId, Date.now());
+              const hint = extractLastLine(event.input || "", 35);
+              this.updateSession(sessionId, {
+                planStepActivity: hint ? `💭 思考中：${hint}` : "💭 思考中...",
+              });
+            }
             // Add LLM call to debugCalls immediately when it starts (for real-time display)
             if (debugEnabled) {
               console.log("[llm_start] node:", event.node, "call_id:", event.call_id, "input.length:", event.input?.length);
@@ -443,6 +540,7 @@ class SessionStore {
               this.updateSession(sessionId, {
                 currentPlan: event.plan,
                 planStepTimestamps: {},
+                planStepActivity: "",
               });
             }
             break;
@@ -464,9 +562,13 @@ class SessionStore {
               if (event.status === "running") {
                 timestamps[stepId] = Date.now();
               }
+              // 步骤状态变化时重置活动描述
+              const activityReset = (event.status === "running" || event.status === "completed" || event.status === "failed")
+                ? "" : this.getState(sessionId).planStepActivity;
               this.updateSession(sessionId, {
                 currentPlan: updatedPlan,
                 planStepTimestamps: timestamps,
+                planStepActivity: activityReset,
               });
             }
             break;
@@ -548,6 +650,9 @@ class SessionStore {
       }
     }
 
+    // 清理节流计时器
+    this.lastTokenActivityTs.delete(sessionId);
+
     // Finalize — auto-complete any remaining plan steps
     const finalState = this.getState(sessionId);
     let finalPlan = finalState.currentPlan;
@@ -588,6 +693,7 @@ class SessionStore {
         thinkingSteps: [],
         currentPlan: finalPlan,
         planFadeOut: true,
+        planStepActivity: "",
       });
       // 延迟 500ms 后清除 currentPlan，让 PlanCard 有时间播放淡出动画
       setTimeout(() => {
@@ -614,6 +720,7 @@ class SessionStore {
         currentPlan: null,
         planFadeOut: false,
         planStepTimestamps: {},
+        planStepActivity: "",
       });
     } else {
       this.updateSession(sessionId, {
@@ -624,6 +731,7 @@ class SessionStore {
         currentPlan: null,
         planFadeOut: false,
         planStepTimestamps: {},
+        planStepActivity: "",
       });
     }
 
@@ -694,6 +802,7 @@ class SessionStore {
     this.abortControllers.delete(sessionId);
     this.sessions.delete(sessionId);
     this.sessionAllowedTools.delete(sessionId);
+    this.lastTokenActivityTs.delete(sessionId);
     this.notify();
   }
 

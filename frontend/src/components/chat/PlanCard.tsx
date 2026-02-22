@@ -17,6 +17,8 @@ interface PlanCardProps {
   onApprove?: (planId: string, approved: boolean) => void;
   /** 步骤时间戳，用于计算耗时 */
   stepTimestamps?: Record<number, number>;
+  /** 当前 running 步骤的实时活动描述 */
+  stepActivity?: string;
 }
 
 export default function PlanCard({
@@ -28,6 +30,7 @@ export default function PlanCard({
   awaitingApproval = false,
   onApprove,
   stepTimestamps = {},
+  stepActivity,
 }: PlanCardProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const autoCollapseRef = useRef(false);
@@ -113,6 +116,7 @@ export default function PlanCard({
               steps={plan.steps}
               isLive={isLive}
               stepTimestamps={stepTimestamps}
+              stepActivity={stepActivity}
             />
           </div>
 

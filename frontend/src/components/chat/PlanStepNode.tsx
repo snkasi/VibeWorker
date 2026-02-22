@@ -11,6 +11,8 @@ interface PlanStepNodeProps {
   duration?: number;
   /** 是否被 replanner 调整过 */
   isRevised?: boolean;
+  /** running 步骤的实时活动描述（如 "🌐 获取网页 sina.com..."） */
+  activity?: string;
 }
 
 /** 步骤圆点 — 4 种状态对应不同样式 */
@@ -64,6 +66,7 @@ export default function PlanStepNode({
   isLive,
   duration,
   isRevised,
+  activity,
 }: PlanStepNodeProps) {
   return (
     <div className="flex gap-3">
@@ -73,9 +76,9 @@ export default function PlanStepNode({
         {!isLast && <ConnectorLine status={step.status} />}
       </div>
 
-      {/* 右侧：标题 + 耗时/状态 */}
-      <div className={`pb-3 flex-1 min-w-0 flex items-start justify-between gap-2 ${isLast ? "pb-0" : ""}`}>
-        <span className={`text-sm leading-5 truncate ${
+      {/* 右侧：标题 + 活动描述（填充中间） + 状态图标 */}
+      <div className={`pb-3 flex-1 min-w-0 flex items-start gap-2 ${isLast ? "pb-0" : ""}`}>
+        <span className={`text-sm leading-5 shrink-0 ${
           step.status === "completed"
             ? "text-muted-foreground"
             : step.status === "running"
@@ -84,7 +87,13 @@ export default function PlanStepNode({
         }`}>
           {step.title}
         </span>
-        <span className="shrink-0 text-xs leading-5 tabular-nums">
+        {/* 活动描述：自适应填充标题和右侧图标之间的空间 */}
+        {step.status === "running" && isLive && activity && (
+          <span className="flex-1 min-w-0 text-xs leading-5 text-blue-500/70 truncate animate-pulse-soft">
+            {activity}
+          </span>
+        )}
+        <span className="shrink-0 text-xs leading-5 tabular-nums ml-auto">
           {step.status === "completed" && duration != null && (
             <span className="text-green-600 dark:text-green-400">
               &#x2713; {duration < 1 ? `${(duration * 1000).toFixed(0)}ms` : `${duration.toFixed(1)}s`}

@@ -248,7 +248,7 @@ export default function ChatPanel({
     onFileOpen,
 }: ChatPanelProps) {
     // Store-driven state
-    const { messages, isStreaming, streamingContent, streamingSegments, thinkingSteps, approvalRequest, planApprovalRequest, currentPlan, planFadeOut, planStepTimestamps } = useSessionState(sessionId);
+    const { messages, isStreaming, streamingContent, streamingSegments, thinkingSteps, approvalRequest, planApprovalRequest, currentPlan, planFadeOut, planStepTimestamps, planStepActivity } = useSessionState(sessionId);
     const { sendMessage, stopStream, clearApproval, addSessionAllowedTool, approvePlan } = useSessionActions(sessionId);
 
     // Local UI state
@@ -337,6 +337,7 @@ export default function ChatPanel({
                             awaitingApproval={!!planApprovalRequest && planApprovalRequest.plan_id === currentPlan.plan_id}
                             onApprove={approvePlan}
                             stepTimestamps={planStepTimestamps}
+                            stepActivity={planStepActivity}
                         />
                     </div>
                 )}
