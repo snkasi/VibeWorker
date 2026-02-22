@@ -813,19 +813,105 @@ export interface CompressMemoryResult {
   merge_details: MergeDetail[];
 }
 
-export async function compressMemory(forceTextSimilarity: boolean = false): Promise<CompressMemoryResult> {
+export interface CompressProgressEvent {
+  type: "progress";
+  message: string;
+  step: "backup" | "load" | "cluster" | "merge" | "save";
+  detail?: {
+    category?: string;
+    count?: number;
+    current?: number;
+    total?: number;
+  };
+}
+
+/**
+ * 压缩记忆（SSE 流式接口，支持实时进度）
+ *
+ * @param forceTextSimilarity 强制使用文本相似度
+ * @param onProgress 进度回调
+ * @returns 最终结果
+ */
+export async function compressMemory(
+  forceTextSimilarity: boolean = false,
+  onProgress?: (event: CompressProgressEvent) => void
+): Promise<CompressMemoryResult> {
   const url = new URL(`${API_BASE}/api/memory/compress`);
   if (forceTextSimilarity) {
     url.searchParams.set("force_text_similarity", "true");
   }
+
   const res = await fetch(url.toString(), {
     method: "POST",
   });
+
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.detail || "压缩记忆失败");
   }
-  return await res.json();
+
+  // 解析 SSE 事件流
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new Error("无法读取响应流");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: CompressMemoryResult | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // 解析 SSE 事件（格式: event: xxx\ndata: {...}\n\n）
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || ""; // 最后一个可能不完整，保留
+
+    for (const eventBlock of events) {
+      if (!eventBlock.trim()) continue;
+
+      const lines = eventBlock.split("\n");
+      let eventType = "progress";
+      let eventData = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          eventData = line.slice(5).trim();
+        }
+      }
+
+      if (!eventData) continue;
+
+      try {
+        const parsed = JSON.parse(eventData);
+
+        if (eventType === "result") {
+          result = parsed;
+        } else if (eventType === "error") {
+          throw new Error(parsed.message || "压缩失败");
+        } else if (eventType === "progress" && onProgress) {
+          onProgress(parsed as CompressProgressEvent);
+        }
+      } catch (e) {
+        if (e instanceof SyntaxError) {
+          console.warn("SSE 解析失败:", eventData);
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
+
+  if (!result) {
+    throw new Error("未收到压缩结果");
+  }
+
+  return result;
 }
 
 export async function fetchRollingSummary(): Promise<string> {

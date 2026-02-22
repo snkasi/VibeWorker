@@ -1181,7 +1181,7 @@ async def archive_old_logs(
 
 @app.post("/api/memory/compress")
 async def compress_memory_entries(force_text_similarity: bool = False):
-    """压缩整理长期记忆 — 合并相似记忆，重评重要性
+    """压缩整理长期记忆 — SSE 流式响应，实时推送进度
 
     功能：
     1. 按分类分组记忆
@@ -1194,24 +1194,38 @@ async def compress_memory_entries(force_text_similarity: bool = False):
         force_text_similarity: 强制使用文本相似度算法（当 embedding 不可用时）
 
     Returns:
-        {
-            "status": "ok" | "skip" | "embedding_unavailable",
-            "before": 压缩前条目数,
-            "after": 压缩后条目数,
-            "merged": 被合并的条目数,
-            "kept": 保留原样的条目数,
-            "clusters": 合并的聚类数,
-        }
-
-        当 status="embedding_unavailable" 时，前端应询问用户是否降级。
+        SSE 事件流：
+        - event: progress, data: {"message": "...", "step": "...", "detail": {...}}
+        - event: result, data: {"status": "ok", "before": N, "after": M, ...}
+        - event: error, data: {"message": "..."}
     """
-    try:
-        from memory.compressor import compress_memories
-        result = await compress_memories(force_text_similarity=force_text_similarity)
-        return result
-    except Exception as e:
-        logger.error(f"Memory compression failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    from memory.compressor import compress_memories_stream
+
+    async def event_generator():
+        try:
+            async for event in compress_memories_stream(force_text_similarity=force_text_similarity):
+                event_type = event.get("type", "progress")
+                if event_type == "result":
+                    # 最终结果
+                    yield f"event: result\ndata: {json.dumps(event.get('data', {}), ensure_ascii=False)}\n\n"
+                elif event_type == "error":
+                    yield f"event: error\ndata: {json.dumps({'message': event.get('message', '未知错误')}, ensure_ascii=False)}\n\n"
+                else:
+                    # 进度事件
+                    yield f"event: progress\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"Memory compression failed: {e}")
+            yield f"event: error\ndata: {json.dumps({'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/memory/procedural")

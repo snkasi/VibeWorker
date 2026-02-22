@@ -47,6 +47,7 @@ import {
     type DailyLogEntry,
     type MergeDetail,
     type CompressMemoryResult,
+    type CompressProgressEvent,
 } from "@/lib/api";
 import {
     AlertDialog,
@@ -182,6 +183,7 @@ export default function MemoryPanel({
     const [showCompressConfirm, setShowCompressConfirm] = useState(false);
     const [showFallbackConfirm, setShowFallbackConfirm] = useState(false);  // 降级确认
     const [compressResult, setCompressResult] = useState<CompressMemoryResult | null>(null);
+    const [compressProgress, setCompressProgress] = useState<string>("");  // 实时进度消息
     const [detailPage, setDetailPage] = useState(0);
     const DETAILS_PER_PAGE = 3;
 
@@ -423,13 +425,18 @@ export default function MemoryPanel({
         setShowFallbackConfirm(false);
         setIsCompressing(true);
         setCompressResult(null);
+        setCompressProgress("正在准备...");
         setDetailPage(0);
         try {
-            const result = await compressMemory(forceTextSimilarity);
+            const result = await compressMemory(forceTextSimilarity, (event) => {
+                // 实时更新进度消息
+                setCompressProgress(event.message);
+            });
 
             // 检查是否需要降级
             if (result.status === "embedding_unavailable") {
                 setIsCompressing(false);
+                setCompressProgress("");
                 setShowFallbackConfirm(true);
                 return;
             }
@@ -444,6 +451,7 @@ export default function MemoryPanel({
             console.error("压缩失败:", err);
         } finally {
             setIsCompressing(false);
+            setCompressProgress("");
         }
     };
 
@@ -1007,10 +1015,10 @@ export default function MemoryPanel({
                             <Sparkles className="w-10 h-10 text-amber-500 animate-pulse" />
                             <Loader2 className="w-5 h-5 animate-spin text-amber-600 absolute -bottom-1 -right-1" />
                         </div>
-                        <div className="text-center space-y-1">
+                        <div className="text-center space-y-2">
                             <p className="text-sm font-medium">正在整理记忆...</p>
-                            <p className="text-xs text-muted-foreground">
-                                分析相似度、合并内容、重评重要性
+                            <p className="text-xs text-muted-foreground min-h-[1.25rem] transition-all duration-200">
+                                {compressProgress || "分析相似度、合并内容、重评重要性"}
                             </p>
                         </div>
                     </div>

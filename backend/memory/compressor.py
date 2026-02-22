@@ -373,7 +373,16 @@ async def _batch_merge_clusters(
 
 
 async def compress_memories(force_text_similarity: bool = False) -> dict:
-    """压缩长期记忆 — 主入口
+    """压缩长期记忆 — 非流式版本（兼容旧代码）"""
+    result = None
+    async for event in compress_memories_stream(force_text_similarity):
+        if event.get("type") == "result":
+            result = event.get("data", {})
+    return result or {"status": "error", "message": "压缩失败"}
+
+
+async def compress_memories_stream(force_text_similarity: bool = False):
+    """压缩长期记忆 — 流式版本，实时推送进度
 
     流程：
     1. 备份 memory.json
@@ -386,43 +395,46 @@ async def compress_memories(force_text_similarity: bool = False) -> dict:
     Args:
         force_text_similarity: 强制使用文本相似度（用户确认降级后传入 True）
 
-    Returns:
-        {
-            "status": "ok" | "skip" | "embedding_unavailable",
-            "before": 压缩前条目数,
-            "after": 压缩后条目数,
-            "merged": 被合并的条目数,
-            "kept": 保留原样的条目数,
-            "clusters": 合并的聚类数,
-        }
-
-        当 status="embedding_unavailable" 时，表示 embedding 模型不可用，
-        前端应询问用户是否降级到文本相似度算法。
+    Yields:
+        进度事件字典：
+        - {"type": "progress", "message": "...", "step": "backup|cluster|merge|save", "detail": {...}}
+        - {"type": "result", "data": {...}}  # 最终结果
+        - {"type": "error", "message": "..."}
     """
     from memory.manager import memory_manager
     from memory.search import invalidate_memory_index
 
     # 1. 备份（关键：防止数据丢失）
+    yield {"type": "progress", "message": "正在备份记忆数据...", "step": "backup"}
+
     backup_path = memory_manager.memory_file.with_suffix(".json.pre-compress")
     if memory_manager.memory_file.exists():
         shutil.copy2(memory_manager.memory_file, backup_path)
         logger.info(f"已备份 memory.json 到 {backup_path}")
 
     # 2. 加载所有记忆
+    yield {"type": "progress", "message": "正在加载记忆...", "step": "load"}
+
     data = memory_manager._load_memory_json()
     memories = [MemoryEntry.from_dict(m) for m in data.get("memories", [])]
 
     if len(memories) < 2:
-        return {
-            "status": "skip",
-            "reason": "记忆数量不足，无需压缩",
-            "before": len(memories),
-            "after": len(memories),
-            "merged": 0,
-            "kept": len(memories),
-            "clusters": 0,
-            "merge_details": [],
+        yield {
+            "type": "result",
+            "data": {
+                "status": "skip",
+                "reason": "记忆数量不足，无需压缩",
+                "before": len(memories),
+                "after": len(memories),
+                "merged": 0,
+                "kept": len(memories),
+                "clusters": 0,
+                "merge_details": [],
+            },
         }
+        return
+
+    yield {"type": "progress", "message": f"已加载 {len(memories)} 条记忆", "step": "load"}
 
     # 3. 按分类分组
     by_category: dict[str, list[MemoryEntry]] = {}
@@ -446,10 +458,13 @@ async def compress_memories(force_text_similarity: bool = False) -> dict:
     # 需要 LLM 合并的聚类列表
     clusters_to_merge: list[tuple[str, list[MemoryEntry]]] = []
 
-    for category in VALID_CATEGORIES:
+    # 统计需要处理的分类数量
+    categories_to_process = [cat for cat in VALID_CATEGORIES if by_category.get(cat)]
+    total_categories = len(categories_to_process)
+
+    for cat_idx, category in enumerate(categories_to_process):
         cat_entries = by_category.get(category, [])
-        if not cat_entries:
-            continue
+        cat_label = CATEGORY_LABELS.get(category, category)
 
         if len(cat_entries) == 1:
             # 单条记忆，直接保留
@@ -458,6 +473,13 @@ async def compress_memories(force_text_similarity: bool = False) -> dict:
             continue
 
         # 4.1 向量聚类
+        yield {
+            "type": "progress",
+            "message": f"正在分析「{cat_label}」分类 ({cat_idx + 1}/{total_categories})...",
+            "step": "cluster",
+            "detail": {"category": category, "count": len(cat_entries)},
+        }
+
         logger.info(f"正在聚类 [{category}] 分类的 {len(cat_entries)} 条记忆...")
         try:
             clusters = await _cluster_by_similarity(
@@ -467,16 +489,20 @@ async def compress_memories(force_text_similarity: bool = False) -> dict:
             )
         except EmbeddingUnavailableError:
             # embedding 不可用，返回特殊状态让前端询问用户
-            return {
-                "status": "embedding_unavailable",
-                "message": "embedding 模型不可用，是否降级为文本相似度算法？",
-                "before": len(memories),
-                "after": len(memories),
-                "merged": 0,
-                "kept": 0,
-                "clusters": 0,
-                "merge_details": [],
+            yield {
+                "type": "result",
+                "data": {
+                    "status": "embedding_unavailable",
+                    "message": "embedding 模型不可用，是否降级为文本相似度算法？",
+                    "before": len(memories),
+                    "after": len(memories),
+                    "merged": 0,
+                    "kept": 0,
+                    "clusters": 0,
+                    "merge_details": [],
+                },
             }
+            return
 
         # 4.2 分离需要合并的聚类和单条记忆
         for cluster in clusters:
@@ -490,14 +516,43 @@ async def compress_memories(force_text_similarity: bool = False) -> dict:
                 stats["merged"] += len(cluster)
                 stats["clusters"] += 1
 
+        yield {
+            "type": "progress",
+            "message": f"「{cat_label}」分析完成，发现 {len([c for c in clusters if len(c) > 1])} 组相似记忆",
+            "step": "cluster",
+        }
+
     # 5. 批量 LLM 合并
     merge_details: list[dict] = []
     if clusters_to_merge:
+        yield {
+            "type": "progress",
+            "message": f"正在合并 {len(clusters_to_merge)} 组相似记忆...",
+            "step": "merge",
+            "detail": {"total": len(clusters_to_merge)},
+        }
+
         logger.info(f"正在合并 {len(clusters_to_merge)} 个聚类...")
-        merged_entries, merge_details = await _batch_merge_clusters(clusters_to_merge)
-        new_memories.extend(merged_entries)
+
+        # 逐个合并并推送进度
+        for idx, (category, cluster) in enumerate(clusters_to_merge):
+            cat_label = CATEGORY_LABELS.get(category, category)
+            preview = cluster[0].content[:30] + "..." if len(cluster[0].content) > 30 else cluster[0].content
+
+            yield {
+                "type": "progress",
+                "message": f"正在合并第 {idx + 1}/{len(clusters_to_merge)} 组: {preview}",
+                "step": "merge",
+                "detail": {"current": idx + 1, "total": len(clusters_to_merge), "category": cat_label},
+            }
+
+            merged_entry, detail = await _merge_cluster(cluster, category)
+            new_memories.append(merged_entry)
+            merge_details.append(detail)
 
     # 6. 原子写入
+    yield {"type": "progress", "message": "正在保存记忆...", "step": "save"}
+
     with memory_manager._lock:
         data["memories"] = [m.to_dict() for m in new_memories]
         data["last_updated"] = datetime.now().isoformat()
@@ -516,4 +571,4 @@ async def compress_memories(force_text_similarity: bool = False) -> dict:
         f"合并了 {stats['merged']} 条，保留 {stats['kept']} 条"
     )
 
-    return stats
+    yield {"type": "result", "data": stats}
