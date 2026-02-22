@@ -135,6 +135,7 @@ class Settings(BaseSettings):
     memory_decay_lambda: float = Field(default=0.05)
     memory_implicit_recall_enabled: bool = Field(default=True)
     memory_implicit_recall_top_k: int = Field(default=10)
+    memory_implicit_recall_mode: str = Field(default="keyword")
 
     # MCP Configuration
     mcp_enabled: bool = Field(default=True)

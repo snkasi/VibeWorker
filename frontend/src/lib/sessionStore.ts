@@ -1,5 +1,5 @@
 import { useSyncExternalStore, useEffect, useCallback } from "react";
-import { streamChat, fetchSessionMessages, sendApproval, sendPlanApproval, type ChatMessage, type ToolCall, type MessageSegment, type Plan, type PlanStep, type PlanRevision, type DebugLLMCall, type DebugToolCall, type DebugDivider, type DebugCall, type SSEEvent } from "./api";
+import { streamChat, fetchSessionMessages, sendApproval, sendPlanApproval, type ChatMessage, type ToolCall, type MessageSegment, type Plan, type PlanStep, type PlanRevision, type DebugLLMCall, type DebugToolCall, type DebugDivider, type DebugPhase, type DebugCall, type SSEEvent } from "./api";
 
 // Helper to check if a debug call is an LLM call
 export function isLLMCall(call: DebugCall): call is DebugLLMCall {
@@ -10,6 +10,11 @@ export function isLLMCall(call: DebugCall): call is DebugLLMCall {
 // Helper to check if a debug call is a divider
 export function isDivider(call: DebugCall): call is DebugDivider {
   return "_type" in call && call._type === "divider";
+}
+
+// Helper to check if a debug call is a phase event
+export function isPhase(call: DebugCall): call is DebugPhase {
+  return "_type" in call && call._type === "phase";
 }
 
 // ============================================
@@ -53,6 +58,8 @@ export interface SessionState {
   planStepTimestamps: Record<number, number>;
   // 当前 running 步骤的实时活动描述（如 "🌐 获取网页 sina.com..."）
   planStepActivity: string;
+  // 预处理阶段描述（如"正在加载执行配置..."），流结束后清空
+  streamingPhase: string;
   messagesLoaded: boolean;
   messagesLoading: boolean;
   debugCalls: DebugCall[];
@@ -73,6 +80,7 @@ function defaultState(): SessionState {
     planFadeOut: false,
     planStepTimestamps: {},
     planStepActivity: "",
+    streamingPhase: "",
     messagesLoaded: false,
     messagesLoading: false,
     debugCalls: [],
@@ -404,7 +412,7 @@ class SessionStore {
               // Find the last in-progress call for this tool (skip dividers)
               for (let i = calls.length - 1; i >= 0; i--) {
                 const call = calls[i];
-                if (!isLLMCall(call) && !isDivider(call) && call.tool === event.tool && call._inProgress) {
+                if (!isLLMCall(call) && !isDivider(call) && !isPhase(call) && call.tool === event.tool && call._inProgress) {
                   calls[i] = {
                     ...call,
                     output: output,
@@ -428,7 +436,37 @@ class SessionStore {
             break;
           }
 
+          case "phase": {
+            // memory_recall 仅作为 streamingPhase 指示器，不单独创建 debug 卡片
+            // memory_recall_done 作为合并后的卡片显示在 debug 面板
+            if (event.phase === "memory_recall") {
+              this.updateSession(sessionId, { streamingPhase: event.description || "" });
+              break;
+            }
+            // memory_recall_done 不更新 streamingPhase（保留"正在召回..."直到 llm_start）
+            if (event.phase !== "memory_recall_done") {
+              this.updateSession(sessionId, { streamingPhase: event.description || "" });
+            }
+            // 添加到 debug 面板（memory_recall_done 合并展示为记忆召回卡片）
+            if (debugEnabled) {
+              const calls = this.getState(sessionId).debugCalls;
+              this.updateSession(sessionId, {
+                debugCalls: [...calls, {
+                  _type: "phase" as const,
+                  phase: event.phase || "",
+                  description: event.description || "",
+                  timestamp: new Date().toISOString(),
+                  items: event.items,
+                  mode: event.mode,
+                } as DebugPhase],
+              });
+            }
+            break;
+          }
+
           case "llm_start": {
+            // LLM 开始时清除预处理阶段描述
+            this.updateSession(sessionId, { streamingPhase: "" });
             // 新一轮 LLM 调用开始时，截断当前 text segment，
             // 使后续 token 写入新 segment。这样 summarizer → agent 的总结
             // 会成为独立 segment，前端折叠逻辑才能正确识别最终回答。
@@ -705,6 +743,7 @@ class SessionStore {
         currentPlan: finalPlan,
         planFadeOut: true,
         planStepActivity: "",
+        streamingPhase: "",
       });
       // 延迟 500ms 后清除 currentPlan，让 PlanCard 有时间播放淡出动画
       setTimeout(() => {
@@ -732,6 +771,7 @@ class SessionStore {
         planFadeOut: false,
         planStepTimestamps: {},
         planStepActivity: "",
+        streamingPhase: "",
       });
     } else {
       this.updateSession(sessionId, {
@@ -743,6 +783,7 @@ class SessionStore {
         planFadeOut: false,
         planStepTimestamps: {},
         planStepActivity: "",
+        streamingPhase: "",
       });
     }
 

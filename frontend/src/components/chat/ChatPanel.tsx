@@ -246,7 +246,7 @@ export default function ChatPanel({
     onFileOpen,
 }: ChatPanelProps) {
     // Store-driven state
-    const { messages, isStreaming, streamingContent, streamingSegments, thinkingSteps, approvalRequest, planApprovalRequest, currentPlan, planFadeOut, planStepTimestamps, planStepActivity } = useSessionState(sessionId);
+    const { messages, isStreaming, streamingContent, streamingSegments, thinkingSteps, approvalRequest, planApprovalRequest, currentPlan, planFadeOut, planStepTimestamps, planStepActivity, streamingPhase } = useSessionState(sessionId);
     const { sendMessage, stopStream, clearApproval, addSessionAllowedTool, approvePlan } = useSessionActions(sessionId);
 
     // Local UI state
@@ -686,7 +686,7 @@ export default function ChatPanel({
                                     <div className="w-2 h-2 rounded-full bg-primary/40 animate-pulse-soft" style={{ animationDelay: "200ms" }} />
                                     <div className="w-2 h-2 rounded-full bg-primary/40 animate-pulse-soft" style={{ animationDelay: "400ms" }} />
                                 </div>
-                                <span className="text-xs">正在思考...</span>
+                                <span className="text-xs">{streamingPhase || "正在思考..."}</span>
                             </div>
                         )}
                     </div>

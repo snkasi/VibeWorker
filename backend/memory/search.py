@@ -456,6 +456,7 @@ def get_implicit_recall(
     query: str,
     top_k: int = 3,
     include_procedural: bool = True,
+    mode: str = "keyword",
 ) -> list[dict]:
     """隐式召回 — 对话开始时自动检索相关记忆
 
@@ -463,11 +464,17 @@ def get_implicit_recall(
         query: 用户首条消息
         top_k: 返回数量
         include_procedural: 是否包含程序性记忆
+        mode: 搜索模式，"keyword" 直接关键词搜索，"embedding" 尝试向量搜索（失败自动降级）
 
     Returns:
         相关记忆列表
     """
-    results = search_memories(query, top_k=top_k, use_decay=True)
+    if mode == "keyword":
+        # 关键词模式：直接走关键词搜索，无需 embedding API
+        results = keyword_search(query, top_k=top_k, use_decay=True)
+    else:
+        # embedding 模式：尝试向量搜索，内部已有降级逻辑
+        results = search_memories(query, top_k=top_k, use_decay=True)
 
     # 额外获取程序性记忆
     if include_procedural:

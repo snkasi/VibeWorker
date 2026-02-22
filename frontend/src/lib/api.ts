@@ -122,10 +122,27 @@ export interface DebugDivider {
   timestamp: string;
 }
 
-export type DebugCall = DebugLLMCall | DebugToolCall | DebugDivider;
+// 召回的记忆条目（memory_recall_done 阶段携带）
+export interface RecallItem {
+  content: string;
+  category: string;
+  salience: number;
+}
+
+// 预处理阶段事件（前端 debug 面板展示）
+export interface DebugPhase {
+  _type: "phase";
+  phase: string;
+  description: string;
+  timestamp: string;
+  items?: RecallItem[];  // memory_recall_done 阶段携带的召回结果
+  mode?: string;         // memory_recall_done: "keyword" | "embedding"
+}
+
+export type DebugCall = DebugLLMCall | DebugToolCall | DebugDivider | DebugPhase;
 
 export interface SSEEvent {
-  type: "token" | "tool_start" | "tool_end" | "llm_start" | "llm_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated" | "plan_revised" | "plan_approval_request" | "debug_llm_call";
+  type: "token" | "tool_start" | "tool_end" | "llm_start" | "llm_end" | "done" | "error" | "approval_request" | "plan_created" | "plan_updated" | "plan_revised" | "plan_approval_request" | "debug_llm_call" | "phase";
   content?: string;
   tool?: string;
   input?: string;
@@ -133,6 +150,11 @@ export interface SSEEvent {
   cached?: boolean;  // Cache indicator
   duration_ms?: number;  // Tool/LLM duration
   motivation?: string;  // Agent's motivation/explanation
+  // Phase fields (预处理阶段)
+  phase?: string;
+  description?: string;
+  items?: RecallItem[];  // memory_recall_done 阶段携带
+  mode?: string;         // memory_recall_done: 搜索模式
   // Approval request fields
   request_id?: string;
   risk_level?: "safe" | "warn" | "dangerous" | "blocked";
@@ -228,7 +250,7 @@ export async function fetchSessions(): Promise<Session[]> {
 
 export interface SessionData {
   messages: ChatMessage[];
-  debug_calls: (DebugLLMCall | DebugToolCall)[];
+  debug_calls: DebugCall[];
   plan?: Plan;
 }
 
@@ -363,6 +385,7 @@ export interface SettingsData {
   memory_daily_log_days: number;
   memory_max_prompt_tokens: number;
   memory_index_enabled: boolean;
+  memory_implicit_recall_mode: string;
   // Cache configuration
   enable_url_cache: boolean;
   enable_llm_cache: boolean;

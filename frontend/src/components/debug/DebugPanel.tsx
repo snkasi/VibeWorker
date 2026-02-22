@@ -11,8 +11,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { sessionStore, useSessionState } from "@/lib/sessionStore";
-import type { DebugCall, DebugDivider, DebugLLMCall, DebugToolCall, ModelInfo } from "@/lib/api";
-import { isDivider, isLLMCall } from "@/lib/sessionStore";
+import type { DebugCall, DebugDivider, DebugPhase, DebugLLMCall, DebugToolCall, ModelInfo } from "@/lib/api";
+import { isDivider, isLLMCall, isPhase } from "@/lib/sessionStore";
 
 // 汇率：1 美元 ≈ 6.9087 人民币
 const USD_TO_CNY = 6.9087;
@@ -100,6 +100,83 @@ function DividerCard({ call }: { call: DebugDivider }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---- Phase Card（预处理阶段） ----
+const PHASE_ICONS: Record<string, string> = {
+  graph_config: "⚙️",
+  tools: "🔧",
+  prompt: "📝",
+  memory_recall_done: "🧠",
+};
+
+// 记忆分类中文映射
+const CATEGORY_LABELS: Record<string, string> = {
+  preferences: "偏好",
+  facts: "事实",
+  tasks: "任务",
+  reflections: "反思",
+  procedural: "经验",
+  general: "通用",
+};
+
+// 搜索模式标签
+const MODE_LABELS: Record<string, string> = {
+  keyword: "关键词",
+  embedding: "向量",
+};
+
+function PhaseCard({ call }: { call: DebugPhase }) {
+  const [expanded, setExpanded] = useState(false);
+  const time = new Date(call.timestamp);
+  const timeStr = time.toLocaleTimeString();
+  const icon = PHASE_ICONS[call.phase] || "⏳";
+  // memory_recall_done 是可展开的记忆召回卡片
+  const isRecall = call.phase === "memory_recall_done";
+  const hasItems = isRecall && call.items && call.items.length > 0;
+  const canExpand = isRecall;  // 即使无 items 也可以展开看"未找到"
+
+  return (
+    <div className="my-1.5 rounded-md bg-purple-50/80 dark:bg-purple-950/40 animate-in fade-in slide-in-from-bottom-1 duration-200">
+      <div
+        className={`flex items-center gap-2 text-xs py-1.5 px-2.5 ${canExpand ? "cursor-pointer hover:bg-purple-100/60 dark:hover:bg-purple-900/40 rounded-md transition-colors" : ""}`}
+        onClick={canExpand ? () => setExpanded(!expanded) : undefined}
+      >
+        <span className="text-sm">{icon}</span>
+        <span className="text-purple-700 dark:text-purple-300 font-medium">{call.description}</span>
+        {/* 搜索模式标签 */}
+        {isRecall && call.mode && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-200/60 dark:bg-purple-800/40 text-purple-600 dark:text-purple-300">
+            {MODE_LABELS[call.mode] || call.mode}
+          </span>
+        )}
+        {canExpand && (
+          expanded
+            ? <ChevronDown className="w-3 h-3 text-purple-500/60" />
+            : <ChevronRight className="w-3 h-3 text-purple-500/60" />
+        )}
+        <span className="text-[10px] text-purple-500/60 dark:text-purple-500/50 ml-auto shrink-0">{timeStr}</span>
+      </div>
+      {/* 展开：显示召回的记忆条目 */}
+      {canExpand && expanded && (
+        <div className="px-2.5 pb-2 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+          {hasItems ? call.items!.map((item, i) => (
+            <div key={i} className="flex items-start gap-1.5 text-[11px] py-1 px-2 rounded bg-purple-100/50 dark:bg-purple-900/30">
+              <span className="shrink-0 text-purple-600/70 dark:text-purple-400/70 font-medium">
+                [{CATEGORY_LABELS[item.category] || item.category}]
+              </span>
+              <span className="text-purple-900/80 dark:text-purple-200/80 flex-1 break-all">{item.content}</span>
+              {item.salience >= 0.8 && (
+                <span className="shrink-0 text-amber-500" title={`重要性: ${item.salience}`}>⭐</span>
+              )}
+            </div>
+          )) : (
+            <div className="text-[11px] text-purple-500/50 py-1 px-2">无匹配记忆</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -391,7 +468,7 @@ function DebugCallItem({ call }: { call: DebugLLMCall | DebugToolCall }) {
 // ---- Debug Summary ----
 function DebugSummary({ calls }: { calls: DebugCall[] }) {
   const llmCalls = calls.filter(isLLMCall);
-  const toolCalls = calls.filter((c): c is DebugToolCall => !isLLMCall(c) && !isDivider(c));
+  const toolCalls = calls.filter((c): c is DebugToolCall => !isLLMCall(c) && !isDivider(c) && !isPhase(c));
 
   const llmDuration = llmCalls.reduce((sum, c) => sum + (c.duration_ms || 0), 0);
   const llmTokens = llmCalls.reduce((sum, c) => sum + (c.total_tokens || 0), 0);
@@ -507,6 +584,8 @@ export default function DebugPanel({ sessionId, onClose }: DebugPanelProps) {
               <React.Fragment key={index}>
                 {isDivider(call) ? (
                   <DividerCard call={call} />
+                ) : isPhase(call) ? (
+                  <PhaseCard call={call} />
                 ) : (
                   <>
                     <MotivationCard text={call.motivation || ""} />

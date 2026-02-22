@@ -470,6 +470,7 @@ export default function SettingsDialog() {
         memory_daily_log_days: 2,
         memory_max_prompt_tokens: 4000,
         memory_index_enabled: true,
+        memory_implicit_recall_mode: "keyword",
         enable_url_cache: true,
         enable_llm_cache: false,
         enable_prompt_cache: true,
@@ -730,6 +731,20 @@ export default function SettingsDialog() {
                                 type="number"
                                 placeholder="4000"
                             />
+                            <div className="space-y-1">
+                                <label className="text-xs font-medium text-muted-foreground">隐式召回模式</label>
+                                <select
+                                    value={form.memory_implicit_recall_mode || "keyword"}
+                                    onChange={(e) => updateField("memory_implicit_recall_mode", e.target.value)}
+                                    className="w-full h-8 px-3 text-xs rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
+                                >
+                                    <option value="keyword">关键词搜索（轻量，无需 Embedding 模型）</option>
+                                    <option value="embedding">向量搜索（更精准，需配置 Embedding 模型）</option>
+                                </select>
+                                <p className="text-[10px] text-muted-foreground/60">
+                                    对话开始时自动召回相关记忆的搜索方式。选择向量搜索时，若 Embedding 模型不可用会自动降级为关键词搜索。
+                                </p>
+                            </div>
                         </TabsContent>
 
                         <TabsContent value="task" className="space-y-3 mt-0 max-h-[60vh] overflow-y-auto pr-1">

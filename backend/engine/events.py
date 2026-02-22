@@ -41,6 +41,7 @@ PLAN_CREATED = "plan_created"
 PLAN_UPDATED = "plan_updated"
 PLAN_REVISED = "plan_revised"
 PLAN_APPROVAL_REQUEST = "plan_approval_request"
+PHASE = "phase"
 
 # 工具动机映射（中文显示名）
 TOOL_MOTIVATIONS = {
@@ -54,6 +55,19 @@ TOOL_MOTIVATIONS = {
     "fetch_url": "获取网页内容",
     "plan_create": "创建任务计划",
 }
+
+
+def build_phase(phase_name: str, description: str, **extra) -> dict:
+    """构建预处理阶段事件，通知前端当前处于哪个阶段。
+
+    Args:
+        phase_name: 阶段标识（如 graph_config, tools, prompt, memory_recall, execution）
+        description: 阶段描述文案
+        **extra: 附加数据（如 memory_recall 阶段的 items 列表）
+    """
+    evt = {"type": PHASE, "phase": phase_name, "description": description}
+    evt.update(extra)
+    return evt
 
 
 def build_token(content: str) -> dict:

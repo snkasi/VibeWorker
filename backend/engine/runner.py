@@ -120,10 +120,14 @@ async def _run_uncached(message, session_history, ctx, mws):
     ctx.session_history = session_history
 
     # 1. 加载图配置 + 构建/缓存编译后的图
+    yield events.build_phase("graph_config", "正在加载执行配置...")
+    await asyncio.sleep(0)  # 确保 SSE 立即刷新到客户端
     graph_config = load_graph_config()
     graph = get_or_build_graph(graph_config)
 
     # 2. 解析工具集（通过 config 注入到节点）
+    yield events.build_phase("tools", "正在解析工具集...")
+    await asyncio.sleep(0)
     agent_node_config = get_node_config(graph_config, "agent")
     executor_node_config = get_node_config(graph_config, "executor")
 
@@ -141,6 +145,8 @@ async def _run_uncached(message, session_history, ctx, mws):
     # 3. 构建初始状态
     # 注意：历史消息由 LangGraph checkpointer 管理，这里只发送新消息
     # SystemMessage 使用固定 ID，确保 add_messages reducer 正确替换而非追加
+    yield events.build_phase("prompt", "正在构建系统提示词...")
+    await asyncio.sleep(0)
     system_prompt = build_system_prompt()
 
     # 替换动态占位符（session_id 和工作目录）
@@ -152,14 +158,21 @@ async def _run_uncached(message, session_history, ctx, mws):
     # 隐式召回：对话开始时自动检索相关记忆，追加到 <!-- MEMORY --> 区块内
     # 不含 procedural（程序经验已在 read_memory 中输出），避免重复
     if _settings.memory_implicit_recall_enabled:
+        recall_mode = getattr(_settings, "memory_implicit_recall_mode", "keyword")
+        yield events.build_phase("memory_recall", "正在召回相关记忆...")
+        await asyncio.sleep(0)
         try:
-            recall_ctx = build_implicit_recall_context(message)
+            recall_ctx, recall_items = build_implicit_recall_context(message)
             if recall_ctx:
                 # 追加为 MEMORY 区块的子节，不加 --- 分隔符
                 system_prompt += f"\n\n{recall_ctx}"
-                logger.info("[%s] 隐式召回已注入, 长度=%d", sid, len(recall_ctx))
+                logger.info("[%s] 隐式召回已注入, 长度=%d, 条目=%d", sid, len(recall_ctx), len(recall_items))
+            # 发送召回结果到前端 debug 面板（与 memory_recall 合并为同一个卡片）
+            desc = f"已召回 {len(recall_items)} 条相关记忆" if recall_items else f"未找到相关记忆（{mode_label}）"
+            yield events.build_phase("memory_recall_done", desc, items=recall_items, mode=recall_mode)
         except Exception as e:
             logger.warning("[%s] 隐式召回失败（非致命）: %s", sid, e)
+            yield events.build_phase("memory_recall_done", "记忆召回失败", items=[], mode=recall_mode)
 
     messages = [
         SystemMessage(content=system_prompt, id="system-prompt"),

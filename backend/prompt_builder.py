@@ -249,7 +249,7 @@ def build_system_prompt() -> str:
     return full_prompt
 
 
-def build_implicit_recall_context(user_message: str) -> str:
+def build_implicit_recall_context(user_message: str) -> tuple[str, list[dict]]:
     """基于用户首条消息构建隐式召回上下文
 
     在对话开始时自动检索相关记忆，注入到 <!-- MEMORY --> 区块末尾。
@@ -259,40 +259,51 @@ def build_implicit_recall_context(user_message: str) -> str:
         user_message: 用户的首条消息
 
     Returns:
-        隐式召回的 ## 子区块字符串，由 runner.py 追加到 MEMORY 区块内
+        (context_str, items) 元组：
+        - context_str: 隐式召回的 ## 子区块字符串，由 runner.py 追加到 MEMORY 区块内
+        - items: 召回的原始记忆条目列表（用于 debug 面板展示）
     """
     if not user_message or not user_message.strip():
-        return ""
+        return "", []
 
     try:
         from memory.search import get_implicit_recall
 
         top_k = settings.memory_implicit_recall_top_k
+        mode = getattr(settings, "memory_implicit_recall_mode", "keyword")
         # 不包含 procedural，因为程序经验已在 read_memory() 的 "## 程序经验" 中展示
         results = get_implicit_recall(
             query=user_message,
             top_k=top_k,
             include_procedural=False,
+            mode=mode,
         )
 
         if not results:
-            return ""
+            return "", []
 
         # 过滤掉可能从语义搜索路径进来的 procedural 条目
         results = [r for r in results if r.get("category") != "procedural"]
         if not results:
-            return ""
+            return "", []
 
         parts = ["## 相关记忆（自动召回）\n"]
+        # 构建简要条目列表，供 debug 面板展示
+        recall_items = []
         for r in results[:top_k]:
             content = r.get("content", "")[:200]
             cat = r.get("category", "")
             salience = r.get("salience", 0.5)
             star = "⭐ " if salience >= 0.8 else ""
             parts.append(f"- {star}[{cat}] {content}")
+            recall_items.append({
+                "content": content,
+                "category": cat,
+                "salience": salience,
+            })
 
-        return "\n".join(parts)
+        return "\n".join(parts), recall_items
 
     except Exception as e:
         logger.warning(f"Failed to build implicit recall context: {e}")
-        return ""
+        return "", []

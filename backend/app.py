@@ -349,6 +349,8 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
     # 按时间顺序积累的消息片段（文本+工具交替），用于前端穿插显示
     segments_log: list = []
     current_plan = None
+    # 收集 phase 事件用于持久化到 debug_calls
+    phase_events_log: list = []
     # 标记是否已通过 done 事件正常保存，用于中断时判断是否需要补救保存
     saved_via_done = False
 
@@ -429,6 +431,17 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                     if revised_steps:
                         completed_steps = current_plan.get("steps", [])[:keep_completed]
                         current_plan["steps"] = completed_steps + revised_steps
+            elif event_type == "phase":
+                # 收集 phase 事件用于持久化（仅保存有实际意义的阶段）
+                from datetime import datetime as _dt
+                phase_events_log.append({
+                    "_type": "phase",
+                    "phase": event.get("phase", ""),
+                    "description": event.get("description", ""),
+                    "timestamp": _dt.now().isoformat(),
+                    **({"items": event["items"]} if "items" in event else {}),
+                    **({"mode": event["mode"]} if "mode" in event else {}),
+                })
 
             # 发送 SSE 到客户端
             yield serialize_sse(event)
@@ -443,6 +456,10 @@ async def _stream_agent_response(message: str, history: list, session_id: str, d
                         plan=current_plan,
                     )
                     saved_via_done = True
+
+                # 持久化 phase 事件到 debug_calls（刷新后可恢复）
+                if phase_events_log:
+                    session_manager.save_debug_calls(session_id, phase_events_log)
 
                 # 会话反思：1 次 LLM 调用完成记忆提取+整合
                 if settings.memory_session_reflect_enabled:
@@ -1437,6 +1454,7 @@ class SettingsUpdateRequest(BaseModel):
     memory_decay_lambda: Optional[float] = None
     memory_implicit_recall_enabled: Optional[bool] = None
     memory_implicit_recall_top_k: Optional[int] = None
+    memory_implicit_recall_mode: Optional[str] = None
     # MCP configuration
     mcp_enabled: Optional[bool] = None
     mcp_tool_cache_ttl: Optional[int] = None
@@ -1575,6 +1593,7 @@ async def get_settings():
         "memory_decay_lambda": float(env.get("MEMORY_DECAY_LAMBDA", "0.05")),
         "memory_implicit_recall_enabled": env.get("MEMORY_IMPLICIT_RECALL_ENABLED", "true").lower() == "true",
         "memory_implicit_recall_top_k": int(env.get("MEMORY_IMPLICIT_RECALL_TOP_K", "3")),
+        "memory_implicit_recall_mode": env.get("MEMORY_IMPLICIT_RECALL_MODE", "keyword"),
         # MCP configuration
         "mcp_enabled": env.get("MCP_ENABLED", "true").lower() == "true",
         "mcp_tool_cache_ttl": int(env.get("MCP_TOOL_CACHE_TTL", "3600")),
@@ -1639,6 +1658,7 @@ async def update_settings(request: SettingsUpdateRequest):
         "MEMORY_DECAY_LAMBDA": str(request.memory_decay_lambda) if request.memory_decay_lambda is not None else None,
         "MEMORY_IMPLICIT_RECALL_ENABLED": str(request.memory_implicit_recall_enabled).lower() if request.memory_implicit_recall_enabled is not None else None,
         "MEMORY_IMPLICIT_RECALL_TOP_K": str(request.memory_implicit_recall_top_k) if request.memory_implicit_recall_top_k is not None else None,
+        "MEMORY_IMPLICIT_RECALL_MODE": request.memory_implicit_recall_mode if request.memory_implicit_recall_mode is not None else None,
         # MCP configuration
         "MCP_ENABLED": str(request.mcp_enabled).lower() if request.mcp_enabled is not None else None,
         "MCP_TOOL_CACHE_TTL": str(request.mcp_tool_cache_ttl) if request.mcp_tool_cache_ttl is not None else None,
