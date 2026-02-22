@@ -929,16 +929,18 @@ export default function MemoryPanel({
                             <Sparkles className="w-4 h-4 text-amber-500" />
                             整理长期记忆
                         </AlertDialogTitle>
-                        <AlertDialogDescription className="space-y-2">
-                            <p>此操作将自动整理你的长期记忆：</p>
-                            <ul className="list-disc list-inside text-xs space-y-1 text-muted-foreground">
-                                <li>合并相似的记忆条目</li>
-                                <li>去除冗余信息</li>
-                                <li>重新评估记忆的重要性</li>
-                            </ul>
-                            <p className="text-xs text-muted-foreground/70 pt-1">
-                                整理前会自动备份，可从 memory.json.pre-compress 恢复。
-                            </p>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-2 text-sm text-muted-foreground">
+                                <span className="block">此操作将自动整理你的长期记忆：</span>
+                                <ul className="list-disc list-inside text-xs space-y-1">
+                                    <li>合并相似的记忆条目</li>
+                                    <li>去除冗余信息</li>
+                                    <li>重新评估记忆的重要性</li>
+                                </ul>
+                                <span className="block text-xs text-muted-foreground/70 pt-1">
+                                    整理前会自动备份，可从 memory.json.pre-compress 恢复。
+                                </span>
+                            </div>
                         </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
