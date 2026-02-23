@@ -139,3 +139,5 @@ memory/logs/*.md
 nul
 .claude/
 .agent/
+
+VibeWorker 开发需求文档 (PRD).md
