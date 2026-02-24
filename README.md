@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="frontend/public/logo.png" alt="VibeWorker Logo" width="120" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/logo-white.png">
+    <source media="(prefers-color-scheme: light)" srcset="frontend/public/logo.png">
+    <img src="frontend/public/logo.png" alt="VibeWorker Logo" width="120" />
+  </picture>
 </p>
 
 <h1 align="center">VibeWorker</h1>

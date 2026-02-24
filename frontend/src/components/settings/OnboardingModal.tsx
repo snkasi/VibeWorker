@@ -161,7 +161,7 @@ export default function OnboardingModal({ open, onSuccess }: OnboardingModalProp
                 <div className="h-28 w-full bg-slate-100 dark:bg-slate-900 border-b border-border/40 relative flex items-center justify-center">
                     <div className="absolute inset-0 bg-grid-slate-200/50 dark:bg-grid-white/[0.02] bg-[size:20px_20px]" />
                     <div className="w-14 h-14 bg-white dark:bg-slate-800 rounded-2xl flex items-center justify-center shadow-sm border border-border relative z-10">
-                        <img src="/logo.png" alt="Logo" className="w-8 h-8 opacity-90" />
+                        <img src="/logo.png" alt="Logo" className="w-8 h-8 opacity-90 dark:invert" />
                     </div>
                 </div>
 

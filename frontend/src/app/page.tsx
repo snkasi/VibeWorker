@@ -280,7 +280,7 @@ export default function HomePage() {
       <header className="h-12 flex items-center justify-between px-4 border-b border-border/40 glass-subtle shrink-0 z-50">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="VibeWorker Logo" className="w-6 h-6" />
+            <img src="/logo.png" alt="VibeWorker Logo" className="w-6 h-6 dark:invert" />
             <h1 className="text-sm font-semibold tracking-tight">
               VibeWorker
             </h1>

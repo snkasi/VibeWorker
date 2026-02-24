@@ -19,7 +19,10 @@ export const metadata: Metadata = {
     "VibeWorker 是一个运行在本地的、拥有真实记忆的 AI 数字员工系统。文件即记忆，技能即插件，完全透明可控。",
   keywords: ["AI Agent", "VibeWorker", "Digital Worker", "LangChain", "Memory"],
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/logo.png", media: "(prefers-color-scheme: light)" },
+      { url: "/logo-white.png", media: "(prefers-color-scheme: dark)" }
+    ],
     apple: "/logo.png",
   },
 };

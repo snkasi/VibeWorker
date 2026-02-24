@@ -398,7 +398,7 @@ export default function ChatPanel({
                 )}
                 {messages.length === 0 && !isStreaming && (
                     <div className="flex flex-col items-center justify-center h-full text-center animate-fade-in-up">
-                        <img src="/logo.png" alt="VibeWorker Logo" className="w-16 h-16 mb-4" />
+                        <img src="/logo.png" alt="VibeWorker Logo" className="w-16 h-16 mb-4 dark:invert opacity-90" />
                         <h2 className="text-xl font-semibold mb-2">VibeWorker</h2>
                         <p className="text-muted-foreground text-sm max-w-md">
                             你的本地 AI 副手，拥有真实记忆和可扩展技能。
