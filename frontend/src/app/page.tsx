@@ -6,6 +6,7 @@ import {
   PanelRightOpen,
   Wifi,
   WifiOff,
+  Puzzle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ import ChatPanel from "@/components/chat/ChatPanel";
 import InspectorPanel, { type InspectorMode } from "@/components/editor/InspectorPanel";
 import SettingsDialog, { initTheme } from "@/components/settings/SettingsDialog";
 import OnboardingModal from "@/components/settings/OnboardingModal";
+import ExtensionInstallDialog from "@/components/settings/ExtensionInstallDialog";
 import { checkHealth, generateSessionTitle, fetchSettings, fetchModelPool, type MemoryEntry, type DailyLogEntry } from "@/lib/api";
 import { sessionStore } from "@/lib/sessionStore";
 
@@ -42,6 +44,8 @@ export default function HomePage() {
   const [showInspector, setShowInspector] = useState(false);
   const [isBackendOnline, setIsBackendOnline] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
+  const [isExtensionOnline, setIsExtensionOnline] = useState(false);
+  const [showExtensionDialog, setShowExtensionDialog] = useState(false);
 
   // Onboarding 状态
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -144,6 +148,54 @@ export default function HomePage() {
     check();
     const interval = setInterval(check, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Extension Health check
+  useEffect(() => {
+    let timeoutId: number;
+    let isWaiting = false;
+
+    const check = () => {
+      isWaiting = true;
+      window.postMessage({
+        type: "VIBEWORKER_EXTENSION_REQUEST",
+        payload: { action: "HEALTH_CHECK" }
+      }, "*");
+
+      timeoutId = window.setTimeout(() => {
+        if (isWaiting) {
+          setIsExtensionOnline(false);
+          isWaiting = false;
+        }
+      }, 2000);
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "VIBEWORKER_EXTENSION_RESPONSE" && event.data.payload?.message === "Extension is healthy.") {
+        if (isWaiting) {
+          isWaiting = false;
+          clearTimeout(timeoutId);
+          setIsExtensionOnline(true);
+        }
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    check();
+    // 监听一下当前窗口的可见性，如果从后台切回来，也检查一下
+    const handleVisChange = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    document.addEventListener("visibilitychange", handleVisChange);
+
+    const interval = setInterval(check, 10000);
+
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      document.removeEventListener("visibilitychange", handleVisChange);
+      clearInterval(interval);
+      clearTimeout(timeoutId);
+    };
   }, []);
 
   // 用户按回车发送首条消息时立即触发：截断用户输入作为临时标题
@@ -291,6 +343,31 @@ export default function HomePage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Extension Status Indicator */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div
+                onClick={() => {
+                  if (!isExtensionOnline) {
+                    setShowExtensionDialog(true);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium transition-colors ${isExtensionOnline
+                    ? "text-green-600 bg-green-50"
+                    : "text-destructive bg-destructive/10 cursor-pointer hover:bg-destructive/20"
+                  }`}
+              >
+                <Puzzle className="w-3 h-3" />
+                {isExtensionOnline ? "插件就绪" : "未安装插件"}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              {isExtensionOnline
+                ? "浏览器插件运行正常，能力已完全解锁"
+                : "点击查看如何安装浏览器插件"}
+            </TooltipContent>
+          </Tooltip>
+
           {/* Backend Status Indicator */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -425,6 +502,11 @@ export default function HomePage() {
             localStorage.setItem("vibeworker_skip_onboarding", "true");
           }
         }}
+      />
+
+      <ExtensionInstallDialog
+        open={showExtensionDialog}
+        onOpenChange={setShowExtensionDialog}
       />
     </div>
   );

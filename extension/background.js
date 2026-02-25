@@ -58,6 +58,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
             sendResponse({ status: 'success', message: 'PING received.' });
         }
+        else if (action === 'HEALTH_CHECK') {
+            sendResponse({ status: 'success', message: 'Extension is healthy.' });
+        }
         else if (action === 'OPEN_POPUP') {
             const focused = request.payload?.require_focus !== false; // Default to true
             const waitForUser = request.payload?.wait_for_user === true;
