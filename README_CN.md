@@ -81,6 +81,8 @@ start.bat status        # 查看状态
 
 ```bash
 cd backend
+python -m venv venv
+source venv/bin/activate  # Windows 下使用 `venv\Scripts\activate`
 pip install -r requirements.txt
 python app.py
 ```
