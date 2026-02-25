@@ -167,11 +167,15 @@ export default function HomePage() {
           setIsExtensionOnline(false);
           isWaiting = false;
         }
-      }, 2000);
+      }, 2500);
     };
 
     const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "VIBEWORKER_EXTENSION_RESPONSE" && event.data.payload?.message === "Extension is healthy.") {
+      if (
+        event.data?.type === "VIBEWORKER_EXTENSION_RESPONSE" &&
+        event.data.payload?.status === "success" &&
+        event.data.payload?.message === "Extension is healthy."
+      ) {
         if (isWaiting) {
           isWaiting = false;
           clearTimeout(timeoutId);
@@ -181,7 +185,10 @@ export default function HomePage() {
     };
 
     window.addEventListener("message", handleMessage);
-    check();
+
+    // Give content scripts a moment to inject
+    setTimeout(check, 500);
+
     // 监听一下当前窗口的可见性，如果从后台切回来，也检查一下
     const handleVisChange = () => {
       if (document.visibilityState === "visible") check();
@@ -353,8 +360,8 @@ export default function HomePage() {
                   }
                 }}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium transition-colors ${isExtensionOnline
-                    ? "text-green-600 bg-green-50"
-                    : "text-destructive bg-destructive/10 cursor-pointer hover:bg-destructive/20"
+                  ? "text-green-600 bg-green-50"
+                  : "text-destructive bg-destructive/10 cursor-pointer hover:bg-destructive/20 animate-pulse"
                   }`}
               >
                 <Puzzle className="w-3 h-3" />

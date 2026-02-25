@@ -17,15 +17,23 @@ window.addEventListener('message', (event) => {
         console.log('Content Bridge intercepting VibeWorker request:', message);
 
         // Forward to the extension background script
-        chrome.runtime.sendMessage(message, (response) => {
-            console.log('Content Bridge received response from background:', response);
+        try {
+            chrome.runtime.sendMessage(message, (response) => {
+                if (chrome.runtime.lastError) {
+                    console.error('Content Bridge error:', chrome.runtime.lastError.message);
+                    return;
+                }
+                console.log('Content Bridge received response from background:', response);
 
-            // Optionally send a response back to the Web App
-            window.postMessage({
-                type: 'VIBEWORKER_EXTENSION_RESPONSE',
-                payload: response
-            }, '*');
-        });
+                // Optionally send a response back to the Web App
+                window.postMessage({
+                    type: 'VIBEWORKER_EXTENSION_RESPONSE',
+                    payload: response
+                }, '*');
+            });
+        } catch (e) {
+            console.error('Content Bridge exception:', e);
+        }
     }
 });
 

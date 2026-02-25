@@ -27,7 +27,7 @@ export default function ExtensionInstallDialog({
                         安装 VibeWorker 浏览器插件
                     </DialogTitle>
                     <DialogDescription>
-                        安装插件后，VibeWorker Agent 才能够自主操作浏览器（例如：打开新标签页、填写表单、提取网页内容等）。请按照以下步骤完成安装：
+                        安装插件后，VibeWorker Agent 才能体验完整的功能（例如：填写表单、提取网页内容等）。请按照以下步骤完成安装：
                     </DialogDescription>
                 </DialogHeader>
 
@@ -35,18 +35,6 @@ export default function ExtensionInstallDialog({
                     <div className="flex gap-4 items-start">
                         <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold shrink-0">
                             1
-                        </div>
-                        <div className="space-y-2 flex-1">
-                            <h4 className="text-sm font-medium">下载插件源码</h4>
-                            <p className="text-xs text-muted-foreground leading-relaxed">
-                                插件代码位于项目的 <code className="bg-muted px-1 py-0.5 rounded">extension</code> 目录中。如果您尚未克隆代码，可以点击下方按钮下载（如适用），或者直接在您的本地代码库中找到该目录。
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="flex gap-4 items-start">
-                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold shrink-0">
-                            2
                         </div>
                         <div className="space-y-2 flex-1">
                             <h4 className="text-sm font-medium">打开扩展程序管理页面</h4>
@@ -58,7 +46,7 @@ export default function ExtensionInstallDialog({
 
                     <div className="flex gap-4 items-start">
                         <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold shrink-0">
-                            3
+                            2
                         </div>
                         <div className="space-y-2 flex-1">
                             <h4 className="text-sm font-medium flex items-center gap-2">
@@ -72,14 +60,15 @@ export default function ExtensionInstallDialog({
 
                     <div className="flex gap-4 items-start">
                         <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-semibold shrink-0">
-                            4
+                            3
                         </div>
                         <div className="space-y-2 flex-1">
                             <h4 className="text-sm font-medium flex items-center gap-2">
                                 加载已解压的扩展程序 <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
                             </h4>
                             <p className="text-xs text-muted-foreground leading-relaxed">
-                                点击左上角的 <strong>加载已解压的扩展程序 (Load unpacked)</strong> 按钮，然后选择项目中的 <code className="bg-muted px-1 py-0.5 rounded">extension</code> 文件夹完成安装即可。
+                                点击左上角的 <strong>加载已解压的扩展程序 (Load unpacked)</strong> 按钮，然后选择项目中的以下文件夹完成安装：<br />
+                                <code className="bg-muted px-1 py-0.5 rounded mt-1 inline-block select-all">e:\code\opensre\extension</code>
                             </p>
                         </div>
                     </div>

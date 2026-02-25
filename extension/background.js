@@ -60,6 +60,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
         else if (action === 'HEALTH_CHECK') {
             sendResponse({ status: 'success', message: 'Extension is healthy.' });
+            return true;
         }
         else if (action === 'OPEN_POPUP') {
             const focused = request.payload?.require_focus !== false; // Default to true
