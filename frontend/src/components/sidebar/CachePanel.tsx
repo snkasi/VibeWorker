@@ -47,7 +47,8 @@ function isMcpCache(id: string): boolean {
 function getCacheLabel(id: string): string {
     if (CORE_CACHE_META[id]) return CORE_CACHE_META[id].label;
     if (isMcpCache(id)) {
-        return "MCP";
+        const nameNode = id.replace(/^tool_/, "").replace(/^mcp_/, "");
+        return `MCP: ${nameNode}`;
     }
     // tool_xxx -> "工具: xxx"
     if (id.startsWith("tool_")) {
@@ -288,6 +289,11 @@ export default function CachePanel({ onFileOpen }: CachePanelProps) {
                 const typeStats = stats[id];
                 if (!typeStats) return null;
 
+                if (id.startsWith("tool_") && typeStats.l2.file_count === 0) {
+                    return null;
+                }
+
+
                 const Icon = getCacheIcon(id);
                 const label = getCacheLabel(id);
                 const isExpanded = expandedType === id;
@@ -298,11 +304,10 @@ export default function CachePanel({ onFileOpen }: CachePanelProps) {
                     <div key={id}>
                         {/* Category header */}
                         <button
-                            className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-all duration-150 flex items-center gap-2 group ${
-                                isExpanded
-                                    ? "bg-primary/10 text-primary"
-                                    : "hover:bg-accent text-foreground/70"
-                            }`}
+                            className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-all duration-150 flex items-center gap-2 group ${isExpanded
+                                ? "bg-primary/10 text-primary"
+                                : "hover:bg-accent text-foreground/70"
+                                }`}
                             onClick={() => handleExpand(id)}
                         >
                             {isExpanded ? (
@@ -321,11 +326,10 @@ export default function CachePanel({ onFileOpen }: CachePanelProps) {
                                 {fileCount}条
                             </span>
                             <span
-                                className={`text-[10px] px-1.5 py-0.5 rounded-md shrink-0 ${
-                                    typeStats.enabled
-                                        ? "text-green-600 bg-green-50"
-                                        : "text-muted-foreground bg-muted/50"
-                                }`}
+                                className={`text-[10px] px-1.5 py-0.5 rounded-md shrink-0 ${typeStats.enabled
+                                    ? "text-green-600 bg-green-50"
+                                    : "text-muted-foreground bg-muted/50"
+                                    }`}
                             >
                                 {typeStats.enabled ? "开" : "关"}
                             </span>
