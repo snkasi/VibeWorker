@@ -89,19 +89,24 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"MCP module failed to start background init: {e}")
 
-    # 每日首次启动获取 OpenRouter 定价数据
-    try:
-        from pricing import pricing_manager
-        if pricing_manager.should_fetch_today():
-            success = await pricing_manager.fetch_and_cache()
-            if success:
-                logger.info("OpenRouter pricing data updated")
+    # 非阻塞启动定价数据拉取：向 OpenRouter 请求模型列表，仅影响费用展示功能，
+    # 与 MCP 同理，网络故障或超时不应阻塞主服务启动
+    async def _fetch_pricing():
+        try:
+            from pricing import pricing_manager
+            if pricing_manager.should_fetch_today():
+                success = await pricing_manager.fetch_and_cache()
+                if success:
+                    logger.info("OpenRouter pricing data updated")
+                else:
+                    logger.warning("Failed to fetch OpenRouter pricing (using cache if available)")
             else:
-                logger.warning("Failed to fetch OpenRouter pricing (using cache if available)")
-        else:
-            logger.debug("OpenRouter pricing data is up-to-date")
-    except Exception as e:
-        logger.warning(f"Pricing initialization failed (non-fatal): {e}")
+                logger.debug("OpenRouter pricing data is up-to-date")
+        except Exception as e:
+            logger.warning(f"Pricing initialization failed (non-fatal): {e}")
+
+    asyncio.create_task(_fetch_pricing(), name="pricing-background-fetch")
+    logger.info("Pricing: 后台拉取已启动")
 
     # Start cache cleanup task
     async def cleanup_loop():
