@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
     Dialog,
     DialogContent,
@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Puzzle, Settings, CheckCircle2, RefreshCw } from "lucide-react";
+import { fetchHealthStatus } from "@/lib/api";
 
 interface ExtensionInstallDialogProps {
     open: boolean;
@@ -20,6 +21,20 @@ export default function ExtensionInstallDialog({
     onOpenChange,
     isUpgrade = false
 }: ExtensionInstallDialogProps) {
+    const [extensionPath, setExtensionPath] = useState<string>("正在获取插件路径...");
+
+    useEffect(() => {
+        if (open) {
+            fetchHealthStatus().then(status => {
+                if (status?.extension_path) {
+                    setExtensionPath(status.extension_path);
+                } else {
+                    setExtensionPath("无法获取路径，请确认后端已启动或手动选择 extension 文件夹");
+                }
+            });
+        }
+    }, [open]);
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-[500px]">
@@ -102,7 +117,7 @@ export default function ExtensionInstallDialog({
                                 </h4>
                                 <p className="text-xs text-muted-foreground leading-relaxed">
                                     点击左上角的 <strong>加载已解压的扩展程序 (Load unpacked)</strong> 按钮，然后选择项目中的以下文件夹完成安装：<br />
-                                    <code className="bg-muted px-1 py-0.5 rounded mt-1 inline-block select-all">e:\code\opensre\extension</code>
+                                    <code className="bg-muted px-1 py-0.5 rounded mt-1 inline-block select-all" title={extensionPath}>{extensionPath}</code>
                                 </p>
                             </div>
                         </div>

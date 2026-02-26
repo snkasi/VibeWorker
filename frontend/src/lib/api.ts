@@ -369,6 +369,23 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+export interface HealthStatus {
+  status: string;
+  version: string;
+  model: string;
+  extension_path: string;
+}
+
+export async function fetchHealthStatus(): Promise<HealthStatus | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/health`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 // ============================================
 // Settings API
 // ============================================
