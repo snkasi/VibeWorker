@@ -775,7 +775,7 @@ export default function SettingsDialog() {
                             {/* 品牌设置 */}
                             <div className="space-y-3 mt-4 pt-3 border-t border-border/50">
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-muted-foreground">项目名称</label>
+                                    <label className="text-xs font-medium text-muted-foreground">自定义名称</label>
                                     <input
                                         type="text"
                                         value={brandingName}
@@ -786,7 +786,7 @@ export default function SettingsDialog() {
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-xs font-medium text-muted-foreground">项目 LOGO</label>
+                                    <label className="text-xs font-medium text-muted-foreground">自定义 LOGO</label>
                                     <div className="flex items-start gap-3">
                                         {/* LOGO 预览 */}
                                         <div className="w-14 h-14 rounded-lg border border-border bg-muted/30 flex items-center justify-center overflow-hidden shrink-0">

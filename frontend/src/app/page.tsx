@@ -55,16 +55,20 @@ export default function HomePage() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isModelConfigured, setIsModelConfigured] = useState<boolean>(true);
 
-  // 品牌设置状态（从 localStorage 缓存初始化，避免闪烁）
-  const [branding, setBranding] = useState<BrandingData>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem("vibeworker_branding");
-        if (cached) return JSON.parse(cached);
-      } catch { /* ignore */ }
-    }
-    return { name: "VibeWorker", logo_url: null };
-  });
+  // 品牌设置状态
+  const [branding, setBranding] = useState<BrandingData>({ name: "VibeWorker", logo_url: null });
+  const [brandingLoaded, setBrandingLoaded] = useState(false);
+
+  // 客户端挂载后立即从 localStorage 加载缓存的品牌数据，避免闪烁
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem("vibeworker_branding");
+      if (cached) {
+        setBranding(JSON.parse(cached));
+      }
+    } catch { /* ignore */ }
+    setBrandingLoaded(true);
+  }, []);
 
   // 记忆编辑状态
   const [inspectorMode, setInspectorMode] = useState<InspectorMode>("file");
